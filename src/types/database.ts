@@ -16,8 +16,13 @@ export interface Tenant {
   trade_name: string;
   document_number: string;
   phone: string;
+  address?: string;
   pix_key: string;
   pix_key_type: 'CPF' | 'CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA';
+  bank_name?: string;
+  bank_agency?: string;
+  bank_account?: string;
+  bank_account_type?: 'CORRENTE' | 'POUPANCA';
   subscription_status: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   trial_until?: string;
 }
@@ -36,6 +41,17 @@ export interface Profile {
   created_at: string;
 }
 
+export interface CorporateClientContact {
+  id: string;
+  corporate_client_id: string;
+  name: string;
+  role?: string;
+  phone?: string;
+  email?: string;
+  is_primary: boolean;
+  created_at?: string;
+}
+
 export interface CorporateClient {
   id: string;
   tenant_id: string;
@@ -44,6 +60,8 @@ export interface CorporateClient {
   cnpj?: string;
   billing_cycle: BillingCycle;
   closing_day: number;
+  payment_weekday?: 'SEGUNDA' | 'TERCA' | 'QUARTA' | 'QUINTA' | 'SEXTA' | 'SABADO' | 'DOMINGO';
+  payment_day_type?: 'WEEKDAY' | 'MONTHDAY';
   payment_terms_days: number;
   spending_limit_per_user: number;
   company_covers_only_meal: boolean;
@@ -51,6 +69,7 @@ export interface CorporateClient {
   // Computed client-side
   total_pending?: number;
   employee_count?: number;
+  contacts?: CorporateClientContact[];
 }
 
 export interface Consumer {
@@ -136,6 +155,9 @@ export interface Invoice {
   status: InvoiceStatus;
   paid_at?: string;
   payment_method?: 'PIX' | 'DINHEIRO' | 'CARTAO';
+  payment_receipt_url?: string;
+  invoice_file_url?: string;
+  notes?: string;
   created_at: string;
   corporate_client?: CorporateClient;
   consumer?: Consumer;

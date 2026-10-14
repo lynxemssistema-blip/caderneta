@@ -40,6 +40,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'cadernetas', label: 'Cadernetas', icon: BookOpen, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'COMPANY_MANAGER'] },
     { id: 'faturas', label: 'Faturas', icon: Receipt, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'COMPANY_MANAGER'] },
     { id: 'produtos', label: 'Cardápio', icon: UtensilsCrossed, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'] },
+    { id: 'portal_consumidor', label: 'Meu Consumo', icon: UserPlus, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CONSUMER'] },
+    { id: 'meu_restaurante', label: 'Meu Restaurante', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'] },
     { 
       id: 'aprovacoes', 
       label: 'Aprovações', 

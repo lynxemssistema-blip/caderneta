@@ -3,6 +3,7 @@ import type {
   Tenant, 
   Consumer, 
   CorporateClient, 
+  CorporateClientContact,
   Product, 
   LedgerEntry, 
   Invoice 
@@ -185,7 +186,7 @@ export async function verifyEmailCode(consumerId: string, code: string): Promise
   return !!data;
 }
 
-// --- EMPRESAS CONVENIADAS ---
+// --- EMPRESAS CONVENIADAS & CONTATOS ---
 export async function fetchCorporateClients(tenantId: string = DEFAULT_TENANT_ID): Promise<CorporateClient[]> {
   try {
     const { data, error } = await supabase
@@ -197,7 +198,7 @@ export async function fetchCorporateClients(tenantId: string = DEFAULT_TENANT_ID
     if (error) throw error;
     const corps = data || [];
 
-    // Calcular saldos pendentes e funcionários
+    // Calcular saldos pendentes, funcionários e carregar contatos
     for (const corp of corps) {
       const { data: entries } = await supabase
         .from('ledger_entries')
@@ -214,6 +215,15 @@ export async function fetchCorporateClients(tenantId: string = DEFAULT_TENANT_ID
         .eq('corporate_client_id', corp.id);
 
       corp.employee_count = count || 0;
+
+      // Buscar contatos
+      const { data: contacts } = await supabase
+        .from('corporate_client_contacts')
+        .select('*')
+        .eq('corporate_client_id', corp.id)
+        .order('is_primary', { ascending: false });
+
+      corp.contacts = contacts || [];
     }
 
     return corps;
@@ -232,6 +242,53 @@ export async function createCorporateClient(corp: Omit<CorporateClient, 'id' | '
 
   if (error) throw error;
   return data;
+}
+
+export async function updateCorporateClient(id: string, updates: Partial<CorporateClient>): Promise<CorporateClient | null> {
+  const { data, error } = await supabase
+    .from('corporate_clients')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function fetchCorporateContacts(corporateClientId: string): Promise<CorporateClientContact[]> {
+  const { data, error } = await supabase
+    .from('corporate_client_contacts')
+    .select('*')
+    .eq('corporate_client_id', corporateClientId)
+    .order('is_primary', { ascending: false });
+
+  if (error) {
+    console.error('Erro ao buscar contatos:', error);
+    return [];
+  }
+  return data || [];
+}
+
+export async function createCorporateContact(contact: Omit<CorporateClientContact, 'id' | 'created_at'>): Promise<CorporateClientContact | null> {
+  const { data, error } = await supabase
+    .from('corporate_client_contacts')
+    .insert([contact])
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCorporateContact(contactId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('corporate_client_contacts')
+    .delete()
+    .eq('id', contactId);
+
+  if (error) throw error;
+  return true;
 }
 
 // --- LANÇAMENTO DE VENDA MISTA (SPLIT AUTOMÁTICO) ---
@@ -685,4 +742,158 @@ export async function fetchTenant(tenantId: string = DEFAULT_TENANT_ID): Promise
     };
   }
   return data;
+}
+
+export async function updateTenant(tenantId: string, updates: Partial<Tenant>): Promise<Tenant | null> {
+  const { data, error } = await supabase
+    .from('tenants')
+    .update(updates)
+    .eq('id', tenantId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateInvoice(invoiceId: string, updates: Partial<Invoice>): Promise<Invoice | null> {
+  const { data, error } = await supabase
+    .from('invoices')
+    .update(updates)
+    .eq('id', invoiceId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+// --- RELATÓRIO ANALÍTICO DETALHADO POR EMPRESA (CONSUMO, ITENS E COLABORADORES) ---
+export interface DetailedConsumptionItem {
+  id: string;
+  created_at: string;
+  consumer_id: string;
+  consumer_name: string;
+  consumer_phone?: string;
+  meal_amount: number;
+  extra_amount: number;
+  total_amount: number;
+  description?: string;
+  items: Array<{
+    product_name: string;
+    category: string;
+    quantity: number;
+    unit_price: number;
+    total_price: number;
+  }>;
+}
+
+export async function fetchDetailedCorporateConsumption(
+  corporateClientId: string,
+  startDate?: string,
+  endDate?: string
+): Promise<DetailedConsumptionItem[]> {
+  try {
+    let query = supabase
+      .from('ledger_entries')
+      .select(`
+        id,
+        created_at,
+        consumer_id,
+        meal_amount,
+        extra_amount,
+        total_amount,
+        description,
+        consumer:consumers(name, phone),
+        items:ledger_entry_items(
+          product_name,
+          category,
+          quantity,
+          unit_price,
+          total_price
+        )
+      `)
+      .eq('corporate_client_id', corporateClientId)
+      .eq('payer_type', 'COMPANY')
+      .order('created_at', { ascending: false });
+
+    if (startDate) query = query.gte('created_at', startDate);
+    if (endDate) query = query.lte('created_at', endDate);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return (data || []).map((entry: any) => ({
+      id: entry.id,
+      created_at: entry.created_at,
+      consumer_id: entry.consumer_id,
+      consumer_name: entry.consumer?.name || 'Colaborador',
+      consumer_phone: entry.consumer?.phone || '',
+      meal_amount: Number(entry.meal_amount || 0),
+      extra_amount: Number(entry.extra_amount || 0),
+      total_amount: Number(entry.total_amount || 0),
+      description: entry.description,
+      items: (entry.items || []).map((it: any) => ({
+        product_name: it.product_name,
+        category: it.category,
+        quantity: Number(it.quantity || 1),
+        unit_price: Number(it.unit_price || 0),
+        total_price: Number(it.total_price || 0)
+      }))
+    }));
+  } catch (err) {
+    console.error('Erro ao buscar consumo detalhado da empresa:', err);
+    return [];
+  }
+}
+
+// --- HISTÓRICO DE CONSUMO PARA O PORTAL DO CONSUMIDOR ---
+export async function fetchConsumerConsumptionHistory(consumerId: string): Promise<DetailedConsumptionItem[]> {
+  try {
+    const { data, error } = await supabase
+      .from('ledger_entries')
+      .select(`
+        id,
+        created_at,
+        consumer_id,
+        meal_amount,
+        extra_amount,
+        total_amount,
+        description,
+        payer_type,
+        status,
+        items:ledger_entry_items(
+          product_name,
+          category,
+          quantity,
+          unit_price,
+          total_price
+        )
+      `)
+      .eq('consumer_id', consumerId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    return (data || []).map((entry: any) => ({
+      id: entry.id,
+      created_at: entry.created_at,
+      consumer_id: entry.consumer_id,
+      consumer_name: 'Você',
+      meal_amount: Number(entry.meal_amount || 0),
+      extra_amount: Number(entry.extra_amount || 0),
+      total_amount: Number(entry.total_amount || 0),
+      description: entry.description,
+      items: (entry.items || []).map((it: any) => ({
+        product_name: it.product_name,
+        category: it.category,
+        quantity: Number(it.quantity || 1),
+        unit_price: Number(it.unit_price || 0),
+        total_price: Number(it.total_price || 0)
+      }))
+    }));
+  } catch (err) {
+    console.error('Erro ao buscar histórico do consumidor:', err);
+    return [];
+  }
 }

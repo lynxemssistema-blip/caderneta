@@ -32,3 +32,51 @@
 .touch-btn {
   @apply active:scale-95 transition-all duration-100 touch-manipulation cursor-pointer select-none;
 }
+
+/* Regras de Impressão e Exportação para PDF */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+  }
+
+  /* Ocultar elementos da interface que não devem sair na folha de impressão */
+  nav, footer, .no-print, button, .bottom-nav {
+    display: none !important;
+  }
+
+  /* Forçar quebra de página limpa e cores de texto legíveis */
+  .printable-card, .printable-area {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    border-bottom: 1px solid #e2e8f0 !important;
+    color: #0f172a !important;
+    padding: 6px 8px !important;
+  }
+
+  th {
+    background-color: #f1f5f9 !important;
+    font-weight: bold !important;
+  }
+
+  /* Exibir cabeçalho e rodapé exclusivos do relatório impresso */
+  .print-only {
+    display: block !important;
+  }
+}
+
+.print-only {
+  display: none;
+}
+

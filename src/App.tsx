@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
+import { BottomNav } from './components/BottomNav';
 import { LandingPage } from './pages/LandingPage';
 import { CadastroRestaurante } from './pages/CadastroRestaurante';
 import { SuperAdmin } from './pages/SuperAdmin';
@@ -13,8 +14,10 @@ import { GestorEmpresa } from './pages/GestorEmpresa';
 import { FluxoCaixa } from './pages/FluxoCaixa';
 import { CadastroConsumidor } from './pages/CadastroConsumidor';
 import { ExtratoPublico } from './pages/ExtratoPublico';
+import { MeuRestaurante } from './pages/MeuRestaurante';
+import { PortalConsumidor } from './pages/PortalConsumidor';
 import type { UserRole, Tenant } from './types/database';
-import { fetchConsumers } from './lib/supabase';
+import { fetchConsumers, fetchTenant, DEFAULT_TENANT_ID } from './lib/supabase';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<string>('landing');
@@ -24,6 +27,7 @@ export function App() {
   const [pendingCount, setPendingCount] = useState<number>(0);
 
   useEffect(() => {
+    fetchTenant(DEFAULT_TENANT_ID).then((t) => setActiveTenant(t));
     fetchConsumers().then((list) => {
       const pending = list.filter((c) => c.approval_status === 'PENDING_APPROVAL');
       setPendingCount(pending.length);
@@ -63,7 +67,7 @@ export function App() {
             } else if (role === 'COMPANY_MANAGER') {
               setCurrentTab('gestor_empresa');
             } else if (role === 'CONSUMER') {
-              setCurrentTab('cadastro');
+              setCurrentTab('portal_consumidor');
             } else if (currentTab === 'superadmin' || currentTab === 'gestor_empresa') {
               setCurrentTab('balcao');
             }
@@ -73,7 +77,7 @@ export function App() {
       )}
 
       {/* Conteúdo Principal */}
-      <main className="flex-1 pb-16">
+      <main className="flex-1 pb-20 md:pb-16">
         {/* Landing Page Inicial Explicativa */}
         {currentTab === 'landing' && (
           <LandingPage
@@ -112,6 +116,10 @@ export function App() {
         {currentTab === 'gestor_empresa' && <GestorEmpresa />}
         {currentTab === 'caixa' && <FluxoCaixa />}
         {currentTab === 'cadastro' && <CadastroConsumidor />}
+        {currentTab === 'meu_restaurante' && (
+          <MeuRestaurante onTenantUpdated={(t) => setActiveTenant(t)} />
+        )}
+        {currentTab === 'portal_consumidor' && <PortalConsumidor />}
         
         {/* Extrato Público */}
         {currentTab === 'extrato' && selectedConsumerId && (
@@ -122,9 +130,24 @@ export function App() {
         )}
       </main>
 
+      {/* Barra de Navegação Inferior Fixa Mobile (Celulares & Tablets) */}
+      {!isPublicPage && (
+        <BottomNav
+          currentTab={currentTab}
+          onSelectTab={(tab) => {
+            setCurrentTab(tab);
+            if (tab !== 'extrato') {
+              setSelectedConsumerId(null);
+            }
+          }}
+          userRole={userRole}
+          pendingApprovalsCount={pendingCount}
+        />
+      )}
+
       {/* Rodapé único e não redundante (Apenas quando não for a Landing Page) */}
       {!isPublicPage && (
-        <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500">
+        <footer className="hidden md:block border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500 no-print">
           <p>
             <strong>Caderneta Micro-SaaS</strong> • Lynx EMS • caderneta.lynxems.com.br
             {activeTenant && ` • ${activeTenant.trade_name}`}

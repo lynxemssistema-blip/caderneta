@@ -20,12 +20,14 @@ import {
   DEFAULT_TENANT_ID 
 } from '../lib/supabase';
 import { sound } from '../lib/sound';
+import { ViewToggle } from '../components/ViewToggle';
 
 export const GestorEmpresa: React.FC = () => {
   const [corps, setCorps] = useState<CorporateClient[]>([]);
   const [selectedCorp, setSelectedCorp] = useState<CorporateClient | null>(null);
   const [employees, setEmployees] = useState<Consumer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
 
   // Formulário de Cadastro de Colaborador
   const [isAdding, setIsAdding] = useState(false);
@@ -255,7 +257,14 @@ export const GestorEmpresa: React.FC = () => {
             </h3>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap no-print">
+            <ViewToggle
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              onPrint={() => window.print()}
+              printLabel="Exportar Equipe"
+            />
+
             {/* Campo de Busca */}
             <div className="relative">
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
@@ -407,82 +416,151 @@ export const GestorEmpresa: React.FC = () => {
           </form>
         )}
 
-        {/* Grid de Colaboradores */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredEmployees.map((emp) => {
-            const isActive = emp.status === 'ACTIVE';
+        {/* Grid de Colaboradores: Cards ou Tabela */}
+        {viewMode === 'CARDS' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredEmployees.map((emp) => {
+              const isActive = emp.status === 'ACTIVE';
 
-            return (
-              <div
-                key={emp.id}
-                className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 hover:border-slate-700 transition-all shadow-lg"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-extrabold text-base text-slate-100 flex items-center gap-1.5">
-                      {emp.name}
-                    </h4>
-                    <p className="text-xs text-slate-400 mt-0.5">{emp.phone}</p>
-                    {emp.email && <p className="text-[11px] text-slate-500">{emp.email}</p>}
+              return (
+                <div
+                  key={emp.id}
+                  className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 hover:border-slate-700 transition-all shadow-lg"
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-base text-slate-100 flex items-center gap-1.5">
+                        {emp.name}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">{emp.phone}</p>
+                      {emp.email && <p className="text-[11px] text-slate-500">{emp.email}</p>}
+                    </div>
+
+                    <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full ${
+                      isActive
+                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-rose-950 text-rose-400 border border-rose-500/30'
+                    }`}>
+                      {isActive ? 'Autorizado' : 'Bloqueado'}
+                    </span>
                   </div>
 
-                  <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full ${
-                    isActive
-                      ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30'
-                      : 'bg-rose-950 text-rose-400 border border-rose-500/30'
-                  }`}>
-                    {isActive ? 'Autorizado' : 'Bloqueado'}
-                  </span>
-                </div>
+                  {/* Benefícios Definidos para o Colaborador */}
+                  <div className="p-3 rounded-2xl bg-slate-850 border border-slate-800 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        <Wine className="w-3.5 h-3.5 text-amber-400" /> Benefício Bebida:
+                      </span>
+                      <button
+                        onClick={() => handleToggleBeverage(emp)}
+                        className={`text-[10px] font-black px-2 py-0.5 rounded-lg border ${
+                          emp.company_covers_beverage
+                            ? 'bg-emerald-950 text-emerald-400 border-emerald-500/40'
+                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}
+                      >
+                        {emp.company_covers_beverage ? 'Empresa Cobre' : 'À Parte (Pessoal)'}
+                      </button>
+                    </div>
 
-                {/* Benefícios Definidos para o Colaborador */}
-                <div className="p-3 rounded-2xl bg-slate-850 border border-slate-800 space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <Wine className="w-3.5 h-3.5 text-amber-400" /> Benefício Bebida:
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-blue-400" /> PIN no Balcão:
+                      </span>
+                      <span className="font-mono font-bold text-slate-200">••••</span>
+                    </div>
+                  </div>
+
+                  {/* Ações */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                    <span className="text-xs text-slate-500">
+                      Consumo no Ciclo: <strong className="text-emerald-400 font-black">R$ {Number(emp.total_pending || 0).toFixed(2)}</strong>
                     </span>
+
                     <button
-                      onClick={() => handleToggleBeverage(emp)}
-                      className={`text-[10px] font-black px-2 py-0.5 rounded-lg border ${
-                        emp.company_covers_beverage
-                          ? 'bg-emerald-950 text-emerald-400 border-emerald-500/40'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      onClick={() => handleToggleStatus(emp)}
+                      className={`touch-btn text-xs font-bold px-3 py-1.5 rounded-xl border flex items-center gap-1 ${
+                        isActive
+                          ? 'bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border-rose-500/30'
+                          : 'bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
                       }`}
                     >
-                      {emp.company_covers_beverage ? 'Empresa Cobre' : 'À Parte (Pessoal)'}
+                      <Power className="w-3.5 h-3.5" />
+                      {isActive ? 'Suspender' : 'Reativar'}
                     </button>
                   </div>
-
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-800">
-                    <span className="text-slate-400 flex items-center gap-1.5">
-                      <Lock className="w-3.5 h-3.5 text-blue-400" /> PIN no Balcão:
-                    </span>
-                    <span className="font-mono font-bold text-slate-200">••••</span>
-                  </div>
                 </div>
-
-                {/* Ações */}
-                <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                  <span className="text-xs text-slate-500">
-                    Consumo no Ciclo: <strong className="text-emerald-400 font-black">R$ {Number(emp.total_pending || 0).toFixed(2)}</strong>
-                  </span>
-
-                  <button
-                    onClick={() => handleToggleStatus(emp)}
-                    className={`touch-btn text-xs font-bold px-3 py-1.5 rounded-xl border flex items-center gap-1 ${
-                      isActive
-                        ? 'bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border-rose-500/30'
-                        : 'bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
-                    }`}
-                  >
-                    <Power className="w-3.5 h-3.5" />
-                    {isActive ? 'Suspender' : 'Reativar'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          /* MODO TABELA */
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-850 text-slate-400 uppercase font-bold border-b border-slate-800">
+                  <tr>
+                    <th className="px-4 py-3.5">Nome do Colaborador</th>
+                    <th className="px-4 py-3.5">Telefone / WhatsApp</th>
+                    <th className="px-4 py-3.5">E-mail</th>
+                    <th className="px-4 py-3.5">Regra Bebida / Extra</th>
+                    <th className="px-4 py-3.5 text-right">Consumo no Ciclo</th>
+                    <th className="px-4 py-3.5 text-center">Status</th>
+                    <th className="px-4 py-3.5 text-center no-print">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/80 font-medium">
+                  {filteredEmployees.map((emp) => (
+                    <tr key={emp.id} className="hover:bg-slate-850/50 transition-colors">
+                      <td className="px-4 py-3 font-bold text-white flex items-center gap-2">
+                        <Users className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                        {emp.name}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{emp.phone}</td>
+                      <td className="px-4 py-3 text-slate-400">{emp.email || '-'}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => handleToggleBeverage(emp)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                            emp.company_covers_beverage
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/40'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {emp.company_covers_beverage ? 'Empresa Cobre' : 'Cobrar à Parte'}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-right font-black text-emerald-400 text-sm">
+                        R$ {Number(emp.total_pending || 0).toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          emp.status === 'ACTIVE'
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-rose-950 text-rose-400 border border-rose-500/30'
+                        }`}>
+                          {emp.status === 'ACTIVE' ? 'Autorizado' : 'Bloqueado'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center no-print">
+                        <button
+                          onClick={() => handleToggleStatus(emp)}
+                          className={`px-2 py-1 rounded text-[10px] font-bold ${
+                            emp.status === 'ACTIVE'
+                              ? 'bg-rose-950 text-rose-400 hover:bg-rose-900'
+                              : 'bg-emerald-950 text-emerald-400 hover:bg-emerald-900'
+                          }`}
+                        >
+                          {emp.status === 'ACTIVE' ? 'Suspender' : 'Ativar'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
     </div>
