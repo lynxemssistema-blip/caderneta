@@ -10,7 +10,8 @@ import {
   UserPlus, 
   Menu, 
   X,
-  Server
+  Server,
+  ShieldAlert
 } from 'lucide-react';
 import type { UserRole } from '../types/database';
 
@@ -32,6 +33,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
+    { id: 'superadmin', label: 'Superadmin', icon: ShieldAlert, roles: ['SUPERADMIN'] },
+    { id: 'landing', label: 'Sobre o App', icon: Store, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'COMPANY_MANAGER', 'CONSUMER'] },
     { id: 'balcao', label: 'Balcão PDV', icon: Store, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER'] },
     { id: 'cadernetas', label: 'Cadernetas', icon: BookOpen, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'COMPANY_MANAGER'] },
     { id: 'faturas', label: 'Faturas', icon: Receipt, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'COMPANY_MANAGER'] },
@@ -46,6 +49,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'convenios', label: 'Convênios', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'COMPANY_MANAGER'] },
     { id: 'caixa', label: 'Fluxo Caixa', icon: Wallet, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'] },
     { id: 'cadastro', label: 'Novo Cliente', icon: UserPlus, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'CONSUMER'] },
+    { id: 'novo_restaurante', label: '+ Restaurante Master', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'CONSUMER'] },
   ];
 
   const visibleItems = navItems.filter((item) => item.roles.includes(userRole));
@@ -118,6 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onChange={(e) => onRoleChange(e.target.value as UserRole)}
               className="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-bold rounded-xl px-2.5 py-1.5 border border-slate-700 focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
+              <option value="SUPERADMIN">🛡️ Superadmin (Plataforma)</option>
               <option value="RESTAURANT_ADMIN">👑 Dono Restaurante (Master)</option>
               <option value="CASHIER">🧑‍🍳 Atendente Balcão</option>
               <option value="COMPANY_MANAGER">🏢 Gestor Empresa Conveniada</option>

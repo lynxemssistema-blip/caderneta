@@ -540,6 +540,129 @@ export async function settleConsumerDirectly(consumerId: string, amount: number,
   return true;
 }
 
+// --- CADASTRO DE NOVO RESTAURANTE (MASTER) ---
+export async function registerTenantWithMaster(params: {
+  trade_name: string;
+  document_number: string;
+  phone: string;
+  pix_key: string;
+  pix_key_type: 'CPF' | 'CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA';
+  master_name: string;
+  master_email: string;
+  master_phone: string;
+  master_pin: string;
+}): Promise<{ tenant: Tenant; profile: Partial<Consumer> | null }> {
+  // 1. Criar novo restaurante na tabela tenants
+  const { data: tenant, error: tErr } = await supabase
+    .from('tenants')
+    .insert([{
+      trade_name: params.trade_name,
+      document_number: params.document_number,
+      phone: params.phone,
+      pix_key: params.pix_key,
+      pix_key_type: params.pix_key_type,
+      subscription_status: 'ACTIVE'
+    }])
+    .select()
+    .single();
+
+  if (tErr) throw tErr;
+
+  // 2. Criar perfil do usuário como RESTAURANT_ADMIN (Master)
+  const { data: profile, error: pErr } = await supabase
+    .from('profiles')
+    .insert([{
+      tenant_id: tenant.id,
+      role: 'RESTAURANT_ADMIN',
+      full_name: params.master_name,
+      phone: params.master_phone,
+      email: params.master_email,
+      approval_status: 'APPROVED'
+    }])
+    .select()
+    .single();
+
+  if (pErr) console.warn('Aviso ao criar profile master:', pErr);
+
+  // 3. Cadastrar cardápio padrão inicial para o novo restaurante
+  const initialProducts = [
+    { tenant_id: tenant.id, name: 'Almoço Comercial / Prato Feito', category: 'MEAL', price: 25.00, is_active: true },
+    { tenant_id: tenant.id, name: 'Marmitex Executivo', category: 'MEAL', price: 28.00, is_active: true },
+    { tenant_id: tenant.id, name: 'Refrigerante Lata 350ml', category: 'BEVERAGE', price: 6.00, is_active: true },
+    { tenant_id: tenant.id, name: 'Suco Natural', category: 'BEVERAGE', price: 8.00, is_active: true },
+    { tenant_id: tenant.id, name: 'Sobremesa do Dia', category: 'DESSERT', price: 7.00, is_active: true },
+    { tenant_id: tenant.id, name: 'Café Expresso', category: 'OTHER', price: 4.00, is_active: true },
+  ];
+
+  await supabase.from('products').insert(initialProducts);
+
+  return { tenant, profile };
+}
+
+// --- SUPERADMIN PLATAFORMA CADERNETA ---
+export async function fetchAllTenantsWithStats(): Promise<Array<Tenant & { totalVolume?: number; consumerCount?: number; corpCount?: number }>> {
+  const { data: tenants, error } = await supabase
+    .from('tenants')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Erro ao buscar tenants:', error);
+    return [];
+  }
+
+  const result = [];
+  for (const t of tenants || []) {
+    // Volume total transacionado
+    const { data: entries } = await supabase
+      .from('ledger_entries')
+      .select('total_amount')
+      .eq('tenant_id', t.id);
+
+    const totalVolume = entries?.reduce((acc, curr) => acc + Number(curr.total_amount || 0), 0) || 0;
+
+    // Contagem de consumidores
+    const { count: cCount } = await supabase
+      .from('consumers')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', t.id);
+
+    // Contagem de empresas
+    const { count: corpCount } = await supabase
+      .from('corporate_clients')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', t.id);
+
+    result.push({
+      ...t,
+      totalVolume,
+      consumerCount: cCount || 0,
+      corpCount: corpCount || 0
+    });
+  }
+
+  return result;
+}
+
+export async function updateTenantSubscription(
+  tenantId: string, 
+  status: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED',
+  trialUntil?: string
+): Promise<boolean> {
+  const payload: Partial<Tenant> = { subscription_status: status };
+  if (trialUntil) {
+    payload.trial_until = trialUntil;
+  }
+
+  const { error } = await supabase
+    .from('tenants')
+    .update(payload)
+    .eq('id', tenantId);
+
+  if (error) throw error;
+  return true;
+}
+
 // --- DADOS DO RESTAURANTE / TENANT ---
 export async function fetchTenant(tenantId: string = DEFAULT_TENANT_ID): Promise<Tenant | null> {
   const { data, error } = await supabase
