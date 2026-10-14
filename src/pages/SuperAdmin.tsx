@@ -115,7 +115,7 @@ export const SuperAdmin: React.FC<SuperAdminProps> = ({ onSelectTenant }) => {
           <div className="text-lg font-black text-purple-400 flex items-center gap-1.5 mt-1">
             <Sparkles className="w-5 h-5 text-amber-400" /> PostgreSQL 15+
           </div>
-          <p className="text-[11px] text-slate-400">VPS Hostinger 85.31.60.68</p>
+          <p className="text-[11px] text-slate-400">Lynx EMS Cloud • Self-Hosted</p>
         </div>
 
       </div>

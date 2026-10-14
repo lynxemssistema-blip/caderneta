@@ -225,9 +225,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-6 text-center text-xs text-slate-500">
-        <p><strong>Caderneta Micro-SaaS</strong> • Plataforma multi-restaurante • Domínio: caderneta.lynxems.com.br</p>
+      {/* Footer Limpo e Oficial */}
+      <footer className="border-t border-slate-900 py-8 text-center text-xs text-slate-500">
+        <p className="font-semibold text-slate-400">Caderneta Micro-SaaS • Lynx EMS</p>
+        <p className="text-[11px] text-slate-600 mt-1">caderneta.lynxems.com.br • Todos os direitos reservados</p>
       </footer>
 
     </div>

@@ -9,6 +9,7 @@ import { Faturas } from './pages/Faturas';
 import { Produtos } from './pages/Produtos';
 import { Aprovacoes } from './pages/Aprovacoes';
 import { Convenios } from './pages/Convenios';
+import { GestorEmpresa } from './pages/GestorEmpresa';
 import { FluxoCaixa } from './pages/FluxoCaixa';
 import { CadastroConsumidor } from './pages/CadastroConsumidor';
 import { ExtratoPublico } from './pages/ExtratoPublico';
@@ -17,13 +18,12 @@ import { fetchConsumers } from './lib/supabase';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<string>('landing');
-  const [userRole, setUserRole] = useState<UserRole>('SUPERADMIN');
+  const [userRole, setUserRole] = useState<UserRole>('RESTAURANT_ADMIN');
   const [activeTenant, setActiveTenant] = useState<Tenant | null>(null);
   const [selectedConsumerId, setSelectedConsumerId] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState<number>(0);
 
   useEffect(() => {
-    // Atualizar contagem de aprovações pendentes
     fetchConsumers().then((list) => {
       const pending = list.filter((c) => c.approval_status === 'PENDING_APPROVAL');
       setPendingCount(pending.length);
@@ -41,28 +41,36 @@ export function App() {
     setCurrentTab('balcao');
   };
 
+  const isPublicPage = currentTab === 'landing' || currentTab === 'novo_restaurante';
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-emerald-500 selection:text-white">
-      {/* Barra de Navegação Superior */}
-      <Navbar
-        currentTab={currentTab}
-        onSelectTab={(tab) => {
-          setCurrentTab(tab);
-          if (tab !== 'extrato') {
-            setSelectedConsumerId(null);
-          }
-        }}
-        userRole={userRole}
-        onRoleChange={(role) => {
-          setUserRole(role);
-          if (role === 'SUPERADMIN') {
-            setCurrentTab('superadmin');
-          } else if (currentTab === 'superadmin') {
-            setCurrentTab('balcao');
-          }
-        }}
-        pendingApprovalsCount={pendingCount}
-      />
+      {/* Barra de Navegação Superior (NÃO aparece na Landing Page e no cadastro de restaurante) */}
+      {!isPublicPage && (
+        <Navbar
+          currentTab={currentTab}
+          onSelectTab={(tab) => {
+            setCurrentTab(tab);
+            if (tab !== 'extrato') {
+              setSelectedConsumerId(null);
+            }
+          }}
+          userRole={userRole}
+          onRoleChange={(role) => {
+            setUserRole(role);
+            if (role === 'SUPERADMIN') {
+              setCurrentTab('superadmin');
+            } else if (role === 'COMPANY_MANAGER') {
+              setCurrentTab('gestor_empresa');
+            } else if (role === 'CONSUMER') {
+              setCurrentTab('cadastro');
+            } else if (currentTab === 'superadmin' || currentTab === 'gestor_empresa') {
+              setCurrentTab('balcao');
+            }
+          }}
+          pendingApprovalsCount={pendingCount}
+        />
+      )}
 
       {/* Conteúdo Principal */}
       <main className="flex-1 pb-16">
@@ -101,6 +109,7 @@ export function App() {
         {currentTab === 'produtos' && <Produtos />}
         {currentTab === 'aprovacoes' && <Aprovacoes />}
         {currentTab === 'convenios' && <Convenios />}
+        {currentTab === 'gestor_empresa' && <GestorEmpresa />}
         {currentTab === 'caixa' && <FluxoCaixa />}
         {currentTab === 'cadastro' && <CadastroConsumidor />}
         
@@ -113,13 +122,15 @@ export function App() {
         )}
       </main>
 
-      {/* Footer Minimalista */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500">
-        <p>
-          <strong>Caderneta Micro-SaaS</strong> • Lynx EMS • VPS Hostinger 85.31.60.68 • Domínio: caderneta.lynxems.com.br
-          {activeTenant && ` • Restaurante Ativo: ${activeTenant.trade_name}`}
-        </p>
-      </footer>
+      {/* Rodapé único e não redundante (Apenas quando não for a Landing Page) */}
+      {!isPublicPage && (
+        <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500">
+          <p>
+            <strong>Caderneta Micro-SaaS</strong> • Lynx EMS • caderneta.lynxems.com.br
+            {activeTenant && ` • ${activeTenant.trade_name}`}
+          </p>
+        </footer>
+      )}
     </div>
   );
 }

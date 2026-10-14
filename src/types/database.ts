@@ -72,6 +72,8 @@ export interface Consumer {
   verification_code_expires_at?: string;
   approval_status: ApprovalStatus;
   approved_at?: string;
+  company_covers_beverage?: boolean; // Se a empresa cobre bebida/extra deste funcionário
+  daily_spending_limit?: number; // Limite diário específico (0 para padrão da empresa)
   created_at: string;
   // Joins
   corporate_client?: CorporateClient;

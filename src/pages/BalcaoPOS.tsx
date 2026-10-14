@@ -137,7 +137,8 @@ export const BalcaoPOS: React.FC = () => {
 
   const grandTotal = mealTotal + extraTotal;
   const isCorporate = !!selectedConsumer?.corporate_client_id;
-  const companyCoversOnlyMeal = !!selectedConsumer?.corporate_client?.company_covers_only_meal;
+  const companyCoversOnlyMeal = !!selectedConsumer?.corporate_client?.company_covers_only_meal && !selectedConsumer?.company_covers_beverage;
+  const employeeHasBeverageCovered = !!selectedConsumer?.company_covers_beverage;
 
   // Lógica de finalização após o PIN ser validado
   const handlePinSuccess = async () => {
@@ -426,6 +427,13 @@ export const BalcaoPOS: React.FC = () => {
               <div className="mt-4 pt-3 border-t border-slate-800 space-y-3">
                 
                 {/* Exibição do Split se for empresa conveniada */}
+                {isCorporate && employeeHasBeverageCovered && (
+                  <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs font-semibold text-emerald-300 flex items-center justify-between">
+                    <span>✨ Benefício Especial: Empresa cobre Refeição + Bebidas!</span>
+                    <span className="font-black text-sm text-emerald-200">Total: R$ {grandTotal.toFixed(2)}</span>
+                  </div>
+                )}
+
                 {isCorporate && companyCoversOnlyMeal && (
                   <div className="p-3 rounded-xl bg-blue-950/30 border border-blue-500/30 space-y-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-blue-300">

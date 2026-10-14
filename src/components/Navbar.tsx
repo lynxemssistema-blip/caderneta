@@ -11,7 +11,8 @@ import {
   Menu, 
   X,
   Server,
-  ShieldAlert
+  ShieldAlert,
+  Users
 } from 'lucide-react';
 import type { UserRole } from '../types/database';
 
@@ -46,7 +47,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'],
       badge: pendingApprovalsCount > 0 ? pendingApprovalsCount : undefined 
     },
-    { id: 'convenios', label: 'Convênios', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'COMPANY_MANAGER'] },
+    { id: 'convenios', label: 'Convênios', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'] },
+    { id: 'gestor_empresa', label: 'Portal Empresa', icon: Users, roles: ['SUPERADMIN', 'COMPANY_MANAGER', 'RESTAURANT_ADMIN'] },
     { id: 'caixa', label: 'Fluxo Caixa', icon: Wallet, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'] },
     { id: 'cadastro', label: 'Novo Cliente', icon: UserPlus, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'CONSUMER'] },
     { id: 'novo_restaurante', label: '+ Restaurante Master', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'CONSUMER'] },
@@ -109,11 +111,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Role Switcher e Status */}
           <div className="flex items-center gap-2">
-            {/* Status VPS */}
+            {/* Status Lynx EMS Cloud */}
             <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
               <Server className="w-3.5 h-3.5" />
-              <span>VPS 85.31.60.68</span>
+              <span>Lynx EMS Cloud</span>
             </div>
 
             {/* Seletor de Papel / Role (Permite simular cada visão) */}

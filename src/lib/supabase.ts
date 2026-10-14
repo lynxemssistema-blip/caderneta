@@ -272,7 +272,8 @@ export async function registerSaleSplit(params: {
 
   // Regra de Negócio: Cliente vinculado a Empresa
   if (consumer.corporate_client_id && consumer.corporate_client) {
-    const coversOnlyMeal = consumer.corporate_client.company_covers_only_meal;
+    // Se a empresa cobre só refeição, MAS o colaborador tem benefício individual de bebida liberado pelo gestor:
+    const coversOnlyMeal = consumer.corporate_client.company_covers_only_meal && !consumer.company_covers_beverage;
 
     if (coversOnlyMeal) {
       // 1. Refeição vai para a EMPRESA
