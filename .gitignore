@@ -25,3 +25,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local test & debug scripts
+server/check_*.js
+server/cleanup_*.js
+server/db_*.js
+server/setup_*.js
+server/test_*.js
+server/verify_*.js

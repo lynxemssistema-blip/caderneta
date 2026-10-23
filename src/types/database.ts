@@ -17,6 +17,7 @@ export interface Tenant {
   document_number: string;
   phone: string;
   address?: string;
+  logo_url?: string;
   pix_key: string;
   pix_key_type: 'CPF' | 'CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA';
   bank_name?: string;

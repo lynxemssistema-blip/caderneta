@@ -19,7 +19,11 @@ import type { CartItem } from '../lib/supabase';
 import { PinModal } from '../components/PinModal';
 import { sound } from '../lib/sound';
 
-export const BalcaoPOS: React.FC = () => {
+interface BalcaoPOSProps {
+  tenantId?: string;
+}
+
+export const BalcaoPOS: React.FC<BalcaoPOSProps> = ({ tenantId }) => {
   const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -42,19 +46,21 @@ export const BalcaoPOS: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId]);
 
   const loadData = async () => {
     const [cList, pList] = await Promise.all([
-      fetchConsumers(),
-      fetchProducts()
+      fetchConsumers(tenantId),
+      fetchProducts(tenantId)
     ]);
     setConsumers(cList);
     setProducts(pList);
 
     // Auto-selecionar o primeiro se houver
-    if (cList.length > 0 && !selectedConsumer) {
+    if (cList.length > 0) {
       setSelectedConsumer(cList[0]);
+    } else {
+      setSelectedConsumer(null);
     }
   };
 
@@ -110,7 +116,7 @@ export const BalcaoPOS: React.FC = () => {
     sound.playKeyClick();
     const tempProduct: Product = {
       id: `custom-${Date.now()}`,
-      tenant_id: 'a0000000-0000-0000-0000-000000000001',
+      tenant_id: tenantId || selectedConsumer?.tenant_id || '',
       name: customName.trim(),
       category: customCat,
       price: price,

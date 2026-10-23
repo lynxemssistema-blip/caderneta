@@ -5,35 +5,54 @@ import {
   Utensils, 
   Clock, 
   Users, 
-  Phone, 
   Mail, 
   MessageSquare, 
   Printer, 
-  Trash2, 
-  Star, 
   X, 
-  Eye
+  Eye,
+  Crown,
+  Power,
+  Send,
+  CheckCircle2,
+  AlertCircle,
+  Wine,
+  DollarSign
 } from 'lucide-react';
-import type { CorporateClient, BillingCycle, Tenant } from '../types/database';
+
+import type { CorporateClient, BillingCycle, Tenant, Consumer } from '../types/database';
 import type { DetailedConsumptionItem } from '../lib/supabase';
 import { 
   fetchCorporateClients, 
   createCorporateClient, 
-  createCorporateContact, 
-  deleteCorporateContact, 
   fetchTenant, 
   fetchDetailedCorporateConsumption, 
-  DEFAULT_TENANT_ID 
+  fetchConsumers,
+  registerConsumer,
+  toggleConsumerResponsible,
+  supabase 
 } from '../lib/supabase';
+import { 
+  sendInviteEmail, 
+  sendCorporateReportEmail, 
+  sendPaymentReceiptEmail 
+} from '../lib/emailService';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
 import { ReportHeader } from '../components/ReportHeader';
 
-export const Convenios: React.FC = () => {
+interface ConveniosProps {
+  tenantId?: string;
+  activeTenant?: Tenant | null;
+}
+
+export const Convenios: React.FC<ConveniosProps> = ({ tenantId, activeTenant }) => {
   const [corps, setCorps] = useState<CorporateClient[]>([]);
   const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
   const [isAdding, setIsAdding] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
 
   // Form de Empresa
   const [companyName, setCompanyName] = useState('');
@@ -43,14 +62,16 @@ export const Convenios: React.FC = () => {
   const [closingDay, setClosingDay] = useState(15);
   const [coversOnlyMeal, setCoversOnlyMeal] = useState(true);
 
-  // Modal de Contatos da Empresa
-  const [selectedCorpForContacts, setSelectedCorpForContacts] = useState<CorporateClient | null>(null);
-  const [newContactName, setNewContactName] = useState('');
-  const [newContactRole, setNewContactRole] = useState('Financeiro');
-  const [newContactPhone, setNewContactPhone] = useState('');
-  const [newContactEmail, setNewContactEmail] = useState('');
-  const [newContactIsPrimary, setNewContactIsPrimary] = useState(false);
-  const [addingContact, setAddingContact] = useState(false);
+  // Modal de Colaboradores & Responsáveis da Empresa
+
+  const [selectedCorpForEmployees, setSelectedCorpForEmployees] = useState<CorporateClient | null>(null);
+  const [newEmpName, setNewEmpName] = useState('');
+  const [newEmpPhone, setNewEmpPhone] = useState('');
+  const [newEmpEmail, setNewEmpEmail] = useState('');
+  const [newEmpIsResponsible, setNewEmpIsResponsible] = useState(false);
+  const [newEmpCoversBeverage, setNewEmpCoversBeverage] = useState(false);
+  const [newEmpDailyLimit, setNewEmpDailyLimit] = useState('35.00');
+  const [invitingEmployee, setInvitingEmployee] = useState(false);
 
   // Modal de Relatório de Consumo do Convênio
   const [detailedCorp, setDetailedCorp] = useState<CorporateClient | null>(null);
@@ -59,25 +80,52 @@ export const Convenios: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId, activeTenant?.id]);
 
   const loadData = async () => {
-    const [cList, tData] = await Promise.all([
-      fetchCorporateClients(),
-      fetchTenant(DEFAULT_TENANT_ID)
+    const targetTenantId = tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      setCorps([]);
+      setTenant(null);
+      setConsumers([]);
+      return;
+    }
+    const [cList, tData, consList] = await Promise.all([
+      fetchCorporateClients(targetTenantId),
+      fetchTenant(targetTenantId),
+      fetchConsumers(targetTenantId)
     ]);
     setCorps(cList);
-    setTenant(tData);
+    setTenant(tData || activeTenant || null);
+    setConsumers(consList);
+  };
+
+  const showSuccess = (msg: string) => {
+    sound.playSuccessChime();
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 5000);
+  };
+
+  const showError = (msg: string) => {
+    sound.playWarningBuzzer();
+    setErrorFeedback(msg);
+    setTimeout(() => setErrorFeedback(null), 5000);
   };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyName.trim()) return;
 
+    const targetTenantId = tenantId || tenant?.id || activeTenant?.id;
+    if (!targetTenantId) {
+      showError('Nenhum restaurante ativo selecionado.');
+      return;
+    }
+
     sound.playKeyClick();
     try {
       await createCorporateClient({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: targetTenantId,
         company_name: companyName.trim(),
         cnpj: cnpj.trim() || undefined,
         billing_cycle: billingCycle,
@@ -89,68 +137,237 @@ export const Convenios: React.FC = () => {
         company_covers_only_meal: coversOnlyMeal
       });
 
-      sound.playSuccessChime();
+      showSuccess(`Empresa "${companyName}" cadastrada com sucesso!`);
       setIsAdding(false);
       setCompanyName('');
       setCnpj('');
       loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Falha ao cadastrar empresa';
-      alert(msg);
+      showError(msg);
     }
   };
 
-  const handleAddContact = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCorpForContacts || !newContactName.trim()) return;
+  // Helper para saber se um consumidor é responsável financeiro da empresa
+  const isConsumerResponsible = (emp: Consumer, corp: CorporateClient): boolean => {
+    const cleanPhone = emp.phone.replace(/\D/g, '');
+    const cleanEmail = (emp.email || '').toLowerCase().trim();
 
-    setAddingContact(true);
+    return !!corp.contacts?.some(ct => {
+      const ctPhone = (ct.phone || '').replace(/\D/g, '');
+      const ctEmail = (ct.email || '').toLowerCase().trim();
+      return (cleanPhone && ctPhone === cleanPhone) || (cleanEmail && ctEmail === cleanEmail);
+    });
+  };
+
+  // Alternar se o colaborador é ou não Responsável Financeiro
+  const handleToggleResponsible = async (emp: Consumer, corp: CorporateClient) => {
+    sound.playKeyClick();
+    const currentIsResp = isConsumerResponsible(emp, corp);
+    const targetTenantId = tenantId || tenant?.id || activeTenant?.id;
+    if (!targetTenantId) return;
+
     try {
-      sound.playKeyClick();
-      await createCorporateContact({
-        corporate_client_id: selectedCorpForContacts.id,
-        name: newContactName.trim(),
-        role: newContactRole.trim(),
-        phone: newContactPhone.trim(),
-        email: newContactEmail.trim(),
-        is_primary: newContactIsPrimary
+      await toggleConsumerResponsible({
+        consumer: emp,
+        corpId: corp.id,
+        makeResponsible: !currentIsResp,
+        tenantId: targetTenantId
       });
 
-      sound.playSuccessChime();
-      setNewContactName('');
-      setNewContactPhone('');
-      setNewContactEmail('');
-      setNewContactIsPrimary(false);
-
-      // Recarregar
-      const updatedCorps = await fetchCorporateClients();
-      setCorps(updatedCorps);
-      const updatedCurrent = updatedCorps.find(c => c.id === selectedCorpForContacts.id);
-      if (updatedCurrent) setSelectedCorpForContacts(updatedCurrent);
-    } catch (err: any) {
-      alert('Erro ao salvar contato: ' + err.message);
-    } finally {
-      setAddingContact(false);
+      showSuccess(
+        !currentIsResp 
+          ? `👑 ${emp.name} agora é Responsável pelo Pagamento da empresa ${corp.company_name}!`
+          : `${emp.name} desmarcado como responsável.`
+      );
+      await loadData();
+      // Atualizar o selectedCorpForEmployees se aberto
+      if (selectedCorpForEmployees) {
+        const updated = (await fetchCorporateClients(targetTenantId)).find(c => c.id === corp.id);
+        if (updated) setSelectedCorpForEmployees(updated);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Falha ao alterar responsável';
+      showError(msg);
     }
   };
 
-  const handleDeleteContact = async (contactId: string) => {
-    if (!confirm('Deseja remover este contato?')) return;
+  // Ativar ou desativar (bloquear) colaborador
+  const handleToggleEmployeeStatus = async (emp: Consumer) => {
+    sound.playKeyClick();
+    const newStatus = emp.status === 'ACTIVE' ? 'BLOCKED' : 'ACTIVE';
     try {
-      await deleteCorporateContact(contactId);
-      sound.playSuccessChime();
-      const updatedCorps = await fetchCorporateClients();
-      setCorps(updatedCorps);
-      if (selectedCorpForContacts) {
-        const updatedCurrent = updatedCorps.find(c => c.id === selectedCorpForContacts.id);
-        if (updatedCurrent) setSelectedCorpForContacts(updatedCurrent);
+      await supabase
+        .from('consumers')
+        .update({ status: newStatus })
+        .eq('id', emp.id);
+
+      showSuccess(`Colaborador ${emp.name} foi ${newStatus === 'ACTIVE' ? 'ativado' : 'bloqueado'}.`);
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao alterar status';
+      showError(msg);
+    }
+  };
+
+  // Convidar e cadastrar novo colaborador para a empresa
+  const handleInviteEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCorpForEmployees || !newEmpName.trim() || !newEmpPhone.trim()) {
+      showError('Nome e telefone são obrigatórios.');
+      return;
+    }
+
+    sound.playKeyClick();
+    setInvitingEmployee(true);
+    const targetTenantId = tenantId || tenant?.id || activeTenant?.id;
+    if (!targetTenantId) {
+      showError('Nenhum restaurante ativo selecionado.');
+      setInvitingEmployee(false);
+      return;
+    }
+
+    try {
+      // 1. Cadastrar o consumidor
+      const newConsumer = await registerConsumer({
+        tenant_id: targetTenantId,
+        name: newEmpName.trim(),
+        phone: newEmpPhone.trim(),
+        email: newEmpEmail.trim() || undefined,
+        pin: '1234',
+        corporate_client_id: selectedCorpForEmployees.id
+      });
+
+      if (!newConsumer?.id) throw new Error('Falha ao cadastrar colaborador');
+
+      // 2. Definir regras do convênio
+      await supabase
+        .from('consumers')
+        .update({
+          approval_status: 'APPROVED',
+          status: 'ACTIVE',
+          email_verified: true,
+          company_covers_beverage: newEmpCoversBeverage,
+          daily_spending_limit: parseFloat(newEmpDailyLimit.replace(',', '.')) || 0,
+          has_individual_account: true,
+          individual_credit_limit: 200.00
+        })
+        .eq('id', newConsumer.id);
+
+      // 3. Se marcado como responsável pelo pagamento, vincular
+      if (newEmpIsResponsible) {
+        await toggleConsumerResponsible({
+          consumer: { ...newConsumer, name: newEmpName.trim(), phone: newEmpPhone.trim(), email: newEmpEmail.trim() },
+          corpId: selectedCorpForEmployees.id,
+          makeResponsible: true,
+          tenantId: targetTenantId
+        });
       }
-    } catch (err: any) {
-      alert('Erro ao excluir: ' + err.message);
+
+      // 4. Se informou e-mail, enviar o convite oficial
+      if (newEmpEmail.trim()) {
+        const inviteUrl = `${window.location.origin}/?invite=true&tenant=${targetTenantId}&corp=${selectedCorpForEmployees.id}&email=${encodeURIComponent(newEmpEmail.trim())}&name=${encodeURIComponent(newEmpName.trim())}`;
+        await sendInviteEmail({
+          email: newEmpEmail.trim(),
+          name: newEmpName.trim(),
+          restaurantName: tenant?.trade_name || 'Restaurante Parceiro',
+          inviteUrl,
+          creditLimit: 200
+        });
+      }
+
+      showSuccess(`Colaborador ${newEmpName} adicionado e convite enviado com sucesso!`);
+      setNewEmpName('');
+      setNewEmpPhone('');
+      setNewEmpEmail('');
+      setNewEmpIsResponsible(false);
+      setNewEmpCoversBeverage(false);
+      setNewEmpDailyLimit('35.00');
+
+      await loadData();
+      const updated = (await fetchCorporateClients(targetTenantId)).find(c => c.id === selectedCorpForEmployees.id);
+      if (updated) setSelectedCorpForEmployees(updated);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Falha ao cadastrar';
+      showError(msg);
+    } finally {
+      setInvitingEmployee(false);
+    }
+  };
+
+  // Disparar relatório de faturas pendentes por e-mail para todos os responsáveis da empresa
+  const handleSendEmailReport = async (corp: CorporateClient) => {
+    sound.playKeyClick();
+    const emails = (corp.contacts || [])
+      .map(c => c.email?.trim())
+      .filter((e): e is string => !!e && e.includes('@'));
+
+    if (emails.length === 0) {
+      showError(`A empresa ${corp.company_name} não possui nenhum e-mail de responsável cadastrado. Cadastre um responsável com e-mail primeiro.`);
+      return;
+    }
+
+    try {
+      const res = await sendCorporateReportEmail({
+        emails,
+        companyName: corp.company_name,
+        restaurantName: tenant?.trade_name || 'Restaurante Parceiro',
+        totalAmount: corp.total_pending || 0,
+        cycleName: corp.billing_cycle === 'SEMANAL' ? `Semanal (${corp.payment_weekday || 'Quinta'})` : `Mensal (Dia ${corp.closing_day})`,
+        dueDate: corp.billing_cycle === 'SEMANAL' ? `Toda ${corp.payment_weekday || 'Quinta-feira'}` : `Dia ${corp.closing_day}`,
+        pixKey: tenant?.pix_key,
+        pixKeyType: tenant?.pix_key_type,
+        bankDetails: tenant?.bank_name ? `Banco: ${tenant.bank_name} | Ag: ${tenant.bank_agency} | CC: ${tenant.bank_account}` : undefined,
+        employeeCount: corp.employee_count || 0
+      });
+
+      if (res.success) {
+        showSuccess(`📧 Relatório de pagamentos enviado com sucesso para: ${emails.join(', ')}!`);
+      } else {
+        showError(`Falha ao disparar e-mail: ${res.error}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao enviar e-mail';
+      showError(msg);
+    }
+  };
+
+  // Disparar recibo de pagamento confirmado por e-mail para todos os responsáveis
+  const handleSendPaymentReceipt = async (corp: CorporateClient) => {
+    sound.playKeyClick();
+    const emails = (corp.contacts || [])
+      .map(c => c.email?.trim())
+      .filter((e): e is string => !!e && e.includes('@'));
+
+    if (emails.length === 0) {
+      showError(`A empresa ${corp.company_name} não possui nenhum e-mail de responsável cadastrado.`);
+      return;
+    }
+
+    try {
+      const res = await sendPaymentReceiptEmail({
+        emails,
+        companyName: corp.company_name,
+        restaurantName: tenant?.trade_name || 'Restaurante Parceiro',
+        paidAmount: corp.total_pending || 0,
+        paymentMethod: 'PIX',
+        paidAt: new Date().toLocaleDateString('pt-BR'),
+        cycleName: corp.billing_cycle === 'SEMANAL' ? `Semanal (${corp.payment_weekday || 'Quinta'})` : 'Geral'
+      });
+
+      if (res.success) {
+        showSuccess(`🧾 Recibo de quitação confirmado enviado para: ${emails.join(', ')}!`);
+      } else {
+        showError(`Falha ao enviar recibo: ${res.error}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao emitir recibo';
+      showError(msg);
     }
   };
 
   const handleOpenReport = async (corp: CorporateClient) => {
+
     setDetailedCorp(corp);
     setLoadingConsumption(true);
     try {
@@ -185,9 +402,8 @@ export const Convenios: React.FC = () => {
     window.open(url, '_blank');
   };
 
-  // Helper para verificar se vence amanhã ou hoje
   const getBillingAlert = (corp: CorporateClient) => {
-    const today = new Date().getDay(); // 0 = Domingo, 1 = Segunda, 4 = Quinta, etc.
+    const today = new Date().getDay();
     const dayMap: Record<string, number> = {
       'DOMINGO': 0, 'SEGUNDA': 1, 'TERCA': 2, 'QUARTA': 3, 'QUINTA': 4, 'SEXTA': 5, 'SABADO': 6
     };
@@ -205,6 +421,20 @@ export const Convenios: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-3 py-4 sm:px-6 space-y-6">
       
+      {/* Feedbacks */}
+      {feedback && (
+        <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-xs sm:text-sm flex items-center gap-2 animate-pop">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+          {feedback}
+        </div>
+      )}
+      {errorFeedback && (
+        <div className="p-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold text-xs sm:text-sm flex items-center gap-2 animate-pop">
+          <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+          {errorFeedback}
+        </div>
+      )}
+
       {/* Header com Toggle e Botão */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -213,7 +443,7 @@ export const Convenios: React.FC = () => {
             Gestão de Convênios & Empresas
           </h2>
           <p className="text-xs text-slate-400">
-            Configure ciclos de pagamento (ex: Quinta-feira), múltiplos contatos do financeiro/RH e emita relatórios analíticos de consumo.
+            Cadastre empresas parceiras, envie convites para colaboradores, marque responsáveis pelo pagamento e envie faturas e recibos oficiais por e-mail.
           </p>
         </div>
 
@@ -359,6 +589,9 @@ export const Convenios: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {corps.map((corp) => {
             const alertInfo = getBillingAlert(corp);
+            const corpEmployees = consumers.filter(c => c.corporate_client_id === corp.id);
+            const responsibles = corp.contacts || [];
+
             return (
               <div
                 key={corp.id}
@@ -401,76 +634,111 @@ export const Convenios: React.FC = () => {
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-500 font-bold uppercase block">Equipe</span>
-                    <span className="text-xs font-black text-slate-200">{corp.employee_count || 0} pessoas</span>
+                    <span className="text-xs font-black text-slate-200">{corpEmployees.length} pessoas</span>
                   </div>
                 </div>
 
-                {/* Contatos Cadastrados */}
-                <div className="p-3 rounded-2xl bg-slate-850/60 border border-slate-800/80 space-y-1.5">
+                {/* Responsáveis pelo Pagamento da Empresa */}
+                <div className="p-3.5 rounded-2xl bg-slate-850/70 border border-slate-800 space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-300 flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-blue-400" />
-                      Contatos da Empresa ({corp.contacts?.length || 0})
+                    <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                      <Crown className="w-4 h-4 text-amber-400" />
+                      Responsáveis de Pagamento ({responsibles.length})
                     </span>
                     <button
                       type="button"
-                      onClick={() => setSelectedCorpForContacts(corp)}
+                      onClick={() => setSelectedCorpForEmployees(corp)}
                       className="text-xs font-bold text-emerald-400 hover:text-emerald-300 underline"
                     >
-                      Gerenciar Contatos
+                      Gerenciar Equipe
                     </button>
                   </div>
                   
-                  {corp.contacts && corp.contacts.length > 0 ? (
-                    <div className="space-y-1 pt-1">
-                      {corp.contacts.slice(0, 2).map(c => (
-                        <div key={c.id} className="text-[11px] text-slate-400 flex items-center justify-between">
-                          <span className="truncate">
-                            {c.is_primary && <span className="text-amber-400 font-bold mr-1">★</span>}
-                            {c.name} ({c.role || 'Geral'})
+                  {responsibles.length > 0 ? (
+                    <div className="space-y-1.5 pt-1">
+                      {responsibles.map((r, i) => (
+                        <div key={i} className="text-xs text-slate-300 flex items-center justify-between bg-slate-900/60 p-2 rounded-xl">
+                          <span className="font-bold truncate text-white">
+                            👑 {r.name}
                           </span>
-                          {c.phone && (
-                            <a
-                              href={`https://wa.me/55${c.phone.replace(/\D/g, '')}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-emerald-400 hover:underline flex items-center gap-1"
-                            >
-                              <Phone className="w-3 h-3" /> {c.phone}
-                            </a>
-                          )}
+                          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                            {r.email && <span className="text-slate-300">{r.email}</span>}
+                            {r.phone && <span className="text-emerald-400 font-mono">{r.phone}</span>}
+                          </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-slate-500">Nenhum contato cadastrado ainda.</p>
+                    <div className="text-[11px] text-amber-300/80 bg-amber-950/30 p-2 rounded-xl border border-amber-500/20 flex items-center justify-between">
+                      <span>Nenhum responsável marcado ainda.</span>
+                      <button
+                        onClick={() => setSelectedCorpForEmployees(corp)}
+                        className="text-[10px] font-bold bg-amber-600/30 text-amber-200 px-2 py-0.5 rounded-lg hover:bg-amber-600/50"
+                      >
+                        Marcar Responsável
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                  <div>
-                    <span className="text-[10px] text-slate-500 font-bold block">SALDO DO CICLO ATUAL:</span>
-                    <span className="text-xl font-black text-emerald-400">
-                      R$ {Number(corp.total_pending || 0).toFixed(2)}
-                    </span>
+                {/* Saldo e Botões de Cobrança / Relatório / E-mail */}
+                <div className="pt-2 border-t border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-bold block">SALDO DO CICLO ATUAL:</span>
+                      <span className="text-xl font-black text-emerald-400">
+                        R$ {Number(corp.total_pending || 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      {/* Botão de Enviar Relatório por E-mail */}
+                      <button
+                        type="button"
+                        onClick={() => handleSendEmailReport(corp)}
+                        className="touch-btn px-2.5 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 rounded-xl text-xs font-bold flex items-center gap-1 border border-blue-500/30"
+                        title="Enviar relatório de pagamentos pendentes por e-mail para os responsáveis"
+                      >
+                        <Mail className="w-3.5 h-3.5 text-blue-400" />
+                        E-mail Fatura
+                      </button>
+
+                      {/* Botão de Enviar Recibo de Pagamento */}
+                      <button
+                        type="button"
+                        onClick={() => handleSendPaymentReceipt(corp)}
+                        className="touch-btn px-2.5 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1 border border-emerald-500/30"
+                        title="Enviar comprovante/recibo de quitação por e-mail para os responsáveis"
+                      >
+                        <Send className="w-3.5 h-3.5 text-emerald-400" />
+                        Recibo
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCorpForEmployees(corp)}
+                      className="touch-btn px-3 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-700"
+                    >
+                      <Users className="w-3.5 h-3.5 text-blue-400" />
+                      Colaboradores
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => handleOpenReport(corp)}
-                      className="touch-btn px-3 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-700"
-                      title="Ver extrato e imprimir relatório"
+                      className="touch-btn px-3 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-700"
                     >
                       <Eye className="w-3.5 h-3.5 text-emerald-400" />
-                      Relatório
+                      Extrato
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleSendWhatsAppBilling(corp)}
-                      className="touch-btn px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md"
-                      title="Cobrar ou enviar prévia no WhatsApp"
+                      className="touch-btn px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md"
                     >
                       <MessageSquare className="w-3.5 h-3.5" />
                       Cobrança
@@ -491,8 +759,8 @@ export const Convenios: React.FC = () => {
                   <th className="px-4 py-3.5">Empresa</th>
                   <th className="px-4 py-3.5">CNPJ</th>
                   <th className="px-4 py-3.5">Ciclo & Pagamento</th>
-                  <th className="px-4 py-3.5">Colaboradores</th>
-                  <th className="px-4 py-3.5">Contatos</th>
+                  <th className="px-4 py-3.5">Equipe</th>
+                  <th className="px-4 py-3.5">Responsáveis Financeiros</th>
                   <th className="px-4 py-3.5 text-right">Saldo Atual</th>
                   <th className="px-4 py-3.5 text-center no-print">Ações</th>
                 </tr>
@@ -500,7 +768,8 @@ export const Convenios: React.FC = () => {
               <tbody className="divide-y divide-slate-800/80 font-medium">
                 {corps.map((corp) => {
                   const alertInfo = getBillingAlert(corp);
-                  const primary = corp.contacts?.find(c => c.is_primary) || corp.contacts?.[0];
+                  const corpEmployees = consumers.filter(c => c.corporate_client_id === corp.id);
+                  const responsibles = corp.contacts || [];
 
                   return (
                     <tr key={corp.id} className="hover:bg-slate-850/50 transition-colors">
@@ -519,22 +788,18 @@ export const Convenios: React.FC = () => {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-slate-300">{corp.employee_count || 0} ativos</td>
+                      <td className="px-4 py-3 text-slate-300">{corpEmployees.length} colaboradores</td>
                       <td className="px-4 py-3">
-                        {primary ? (
-                          <div className="text-[11px]">
-                            <span className="font-bold text-white">{primary.name} ({primary.role || 'Contato'})</span>
-                            {primary.phone && (
-                              <span className="block text-emerald-400">{primary.phone}</span>
-                            )}
+                        {responsibles.length > 0 ? (
+                          <div className="space-y-0.5">
+                            {responsibles.map((r, i) => (
+                              <div key={i} className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                                👑 {r.name} {r.email && <span className="text-slate-400 font-normal">({r.email})</span>}
+                              </div>
+                            ))}
                           </div>
                         ) : (
-                          <button
-                            onClick={() => setSelectedCorpForContacts(corp)}
-                            className="text-[11px] text-slate-500 hover:text-emerald-400 underline"
-                          >
-                            + Cadastrar
-                          </button>
+                          <span className="text-slate-500 italic">Nenhum</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right font-black text-emerald-400 text-sm">
@@ -544,11 +809,19 @@ export const Convenios: React.FC = () => {
                         <div className="flex items-center justify-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setSelectedCorpForContacts(corp)}
+                            onClick={() => setSelectedCorpForEmployees(corp)}
                             className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400"
-                            title="Gerenciar Contatos"
+                            title="Gerenciar Colaboradores & Responsáveis"
                           >
                             <Users className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSendEmailReport(corp)}
+                            className="p-1.5 rounded-lg bg-blue-900/60 hover:bg-blue-800 text-blue-300"
+                            title="Enviar Fatura por E-mail"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
                           </button>
                           <button
                             type="button"
@@ -577,162 +850,249 @@ export const Convenios: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL 1: GERENCIAR MÚLTIPLOS CONTATOS DA EMPRESA */}
-      {selectedCorpForContacts && (
+      {/* MODAL PRINCIPAL: GERENCIAR COLABORADORES & RESPONSÁVEIS DE PAGAMENTO */}
+      {selectedCorpForEmployees && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-pop">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto text-left">
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-2xl space-y-5 max-h-[92vh] overflow-y-auto text-left">
+            
+            {/* Header do Modal */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div>
-                <h3 className="text-base font-black text-white flex items-center gap-2">
-                  <Users className="w-5 h-5 text-emerald-400" />
-                  Contatos: {selectedCorpForContacts.company_name}
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <Users className="w-6 h-6 text-emerald-400" />
+                  Equipe & Responsáveis: {selectedCorpForEmployees.company_name}
                 </h3>
-                <p className="text-xs text-slate-400">Cadastre os responsáveis pelo Financeiro, RH ou Diretoria para envio das cobranças e notas fiscais.</p>
+                <p className="text-xs text-slate-400">
+                  Cadastre ou convide os funcionários da empresa, defina quem são os <strong>responsáveis pelo pagamento</strong> e controle permissões de consumo.
+                </p>
               </div>
               <button
-                onClick={() => setSelectedCorpForContacts(null)}
+                onClick={() => setSelectedCorpForEmployees(null)}
                 className="p-1.5 rounded-full bg-slate-800 text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Lista de Contatos Existentes */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-400 uppercase">Contatos Cadastrados:</span>
-              {(!selectedCorpForContacts.contacts || selectedCorpForContacts.contacts.length === 0) ? (
-                <p className="text-xs text-slate-500 bg-slate-850 p-3 rounded-xl border border-slate-800">
-                  Nenhum contato cadastrado ainda. Use o formulário abaixo.
-                </p>
+            {/* Formulário: Convidar / Adicionar Novo Colaborador */}
+            <form onSubmit={handleInviteEmployee} className="p-4 sm:p-5 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
+              <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-emerald-400" />
+                Convidar / Cadastrar Novo Colaborador para esta Empresa
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-400 block mb-1">Nome do Colaborador *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Carlos Eduardo"
+                    value={newEmpName}
+                    onChange={(e) => setNewEmpName(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-400 block mb-1">Telefone / WhatsApp *</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="(11) 98765-4321"
+                    value={newEmpPhone}
+                    onChange={(e) => setNewEmpPhone(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-400 block mb-1">E-mail (para envio do convite/relatório)</label>
+                  <input
+                    type="email"
+                    placeholder="carlos@empresa.com.br"
+                    value={newEmpEmail}
+                    onChange={(e) => setNewEmpEmail(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Opção Destacada: Marcar como Responsável pelo Pagamento */}
+              <div className="p-3.5 bg-amber-950/20 border border-amber-500/30 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Crown className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-amber-200 block">
+                      Marcar este usuário como Responsável de Pagamento / Gestor da Empresa?
+                    </span>
+                    <span className="text-[11px] text-amber-300/80">
+                      Receberá os relatórios de cobrança pendentes e recibos confirmados por e-mail, e poderá ativar/desativar funcionários no portal.
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setNewEmpIsResponsible(!newEmpIsResponsible)}
+                  className={`w-12 h-6 rounded-full transition-colors flex items-center px-0.5 ${
+                    newEmpIsResponsible ? 'bg-amber-500 justify-end' : 'bg-slate-700 justify-start'
+                  }`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white shadow-md" />
+                </button>
+              </div>
+
+              {/* Regras de Benefício */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="flex items-center justify-between p-3 bg-slate-900 border border-slate-800 rounded-xl">
+                  <span className="text-slate-300 flex items-center gap-1.5">
+                    <Wine className="w-4 h-4 text-amber-400" /> Cobrir Bebida/Extra?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setNewEmpCoversBeverage(!newEmpCoversBeverage)}
+                    className={`px-3 py-1 rounded-lg font-bold text-[11px] ${
+                      newEmpCoversBeverage ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {newEmpCoversBeverage ? 'Sim, Cobrir' : 'Não (À parte)'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-slate-900 border border-slate-800 rounded-xl">
+                  <span className="text-slate-300 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-emerald-400" /> Teto Diário
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400 font-bold">R$</span>
+                    <input
+                      type="text"
+                      value={newEmpDailyLimit}
+                      onChange={(e) => setNewEmpDailyLimit(e.target.value)}
+                      className="w-16 bg-slate-800 border border-slate-700 rounded-lg px-2 py-0.5 text-center font-bold text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={invitingEmployee}
+                  className="touch-btn px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-md disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {invitingEmployee ? 'Enviando Convite...' : 'Enviar Convite & Salvar Colaborador'}
+                </button>
+              </div>
+            </form>
+
+            {/* Lista dos Colaboradores Cadastrados */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-300">
+                  Colaboradores Associados à {selectedCorpForEmployees.company_name} ({
+                    consumers.filter(c => c.corporate_client_id === selectedCorpForEmployees.id).length
+                  })
+                </h4>
+              </div>
+
+              {consumers.filter(c => c.corporate_client_id === selectedCorpForEmployees.id).length === 0 ? (
+                <div className="p-6 text-center text-slate-500 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+                  Nenhum colaborador associado a esta empresa ainda. Preencha o formulário acima para convidar o primeiro!
+                </div>
               ) : (
                 <div className="space-y-2">
-                  {selectedCorpForContacts.contacts.map((contact) => (
-                    <div
-                      key={contact.id}
-                      className="p-3 bg-slate-850 border border-slate-800 rounded-xl flex items-center justify-between text-xs"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-white text-sm">{contact.name}</span>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                            {contact.role || 'Geral'}
-                          </span>
-                          {contact.is_primary && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/30 flex items-center gap-0.5">
-                              <Star className="w-2.5 h-2.5 fill-current" /> Principal
-                            </span>
-                          )}
-                        </div>
+                  {consumers
+                    .filter(c => c.corporate_client_id === selectedCorpForEmployees.id)
+                    .map((emp) => {
+                      const isResp = isConsumerResponsible(emp, selectedCorpForEmployees);
+                      const isActive = emp.status === 'ACTIVE';
 
-                        <div className="flex items-center gap-4 mt-1 text-slate-400 text-xs">
-                          {contact.phone && (
-                            <a
-                              href={`https://wa.me/55${contact.phone.replace(/\D/g, '')}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-emerald-400 hover:underline flex items-center gap-1"
+                      return (
+                        <div
+                          key={emp.id}
+                          className="p-3.5 bg-slate-850 border border-slate-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white text-sm">{emp.name}</span>
+                              
+                              {/* Badge de Responsável */}
+                              {isResp ? (
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                                  <Crown className="w-3 h-3 fill-current" /> Responsável Pagamento
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+                                  Colaborador
+                                </span>
+                              )}
+
+                              {/* Status Autorizado/Bloqueado */}
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                isActive ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' : 'bg-rose-950 text-rose-400 border border-rose-500/30'
+                              }`}>
+                                {isActive ? 'Autorizado' : 'Bloqueado'}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-4 mt-1 text-slate-400 text-xs flex-wrap">
+                              <span className="font-mono text-emerald-400">{emp.phone}</span>
+                              {emp.email && <span>{emp.email}</span>}
+                              <span>Consumo no Ciclo: <strong className="text-white">R$ {Number(emp.total_pending || 0).toFixed(2)}</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Ações para o Colaborador */}
+                          <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+                            {/* Alternar se é Responsável Financeiro */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleResponsible(emp, selectedCorpForEmployees)}
+                              className={`touch-btn px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border ${
+                                isResp 
+                                  ? 'bg-amber-950/60 text-amber-300 border-amber-500/40 hover:bg-amber-900/60'
+                                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-amber-300'
+                              }`}
+                              title={isResp ? 'Desmarcar como responsável de pagamento' : 'Marcar como responsável de pagamento'}
                             >
-                              <Phone className="w-3 h-3" /> {contact.phone}
-                            </a>
-                          )}
-                          {contact.email && (
-                            <span className="flex items-center gap-1 text-slate-300">
-                              <Mail className="w-3 h-3 text-slate-500" /> {contact.email}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                              <Crown className="w-3.5 h-3.5" />
+                              {isResp ? 'É Responsável' : 'Tornar Responsável'}
+                            </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteContact(contact.id)}
-                        className="p-2 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800"
-                        title="Remover Contato"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
+                            {/* Alternar Status (Bloquear / Ativar) */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEmployeeStatus(emp)}
+                              className={`touch-btn px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border ${
+                                isActive
+                                  ? 'bg-rose-950/60 text-rose-300 border-rose-500/30 hover:bg-rose-900/60'
+                                  : 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30 hover:bg-emerald-900/60'
+                              }`}
+                              title={isActive ? 'Bloquear lançamento de refeições deste funcionário' : 'Reativar funcionário'}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                              {isActive ? 'Bloquear' : 'Ativar'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                 </div>
               )}
             </div>
 
-            {/* Formulário para Adicionar Novo Contato */}
-            <form onSubmit={handleAddContact} className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-3">
-              <h4 className="font-bold text-xs text-white uppercase tracking-wider">Adicionar Novo Contato</h4>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">Nome do Contato *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: Ana Paula"
-                    value={newContactName}
-                    onChange={(e) => setNewContactName(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">Cargo / Setor</label>
-                  <select
-                    value={newContactRole}
-                    onChange={(e) => setNewContactRole(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="Financeiro">Financeiro / Contas a Pagar</option>
-                    <option value="Recursos Humanos">Recursos Humanos / DP</option>
-                    <option value="Diretoria">Diretoria / Gerência</option>
-                    <option value="Compras">Compras</option>
-                    <option value="Outro">Outro</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">WhatsApp / Telefone *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="(11) 98765-4321"
-                    value={newContactPhone}
-                    onChange={(e) => setNewContactPhone(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">E-mail (para envio de faturas)</label>
-                  <input
-                    type="email"
-                    placeholder="financeiro@empresa.com.br"
-                    value={newContactEmail}
-                    onChange={(e) => setNewContactEmail(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newContactIsPrimary}
-                    onChange={(e) => setNewContactIsPrimary(e.target.checked)}
-                    className="rounded text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span>Definir como contato principal de cobrança</span>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={addingContact}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-md touch-btn disabled:opacity-50"
-                >
-                  {addingContact ? 'Salvando...' : 'Salvar Contato'}
-                </button>
-              </div>
-            </form>
+            <div className="pt-3 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedCorpForEmployees(null)}
+                className="px-6 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs"
+              >
+                Concluir
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -767,6 +1127,15 @@ export const Convenios: React.FC = () => {
             <div className="flex items-center justify-end gap-2 no-print flex-wrap">
               <button
                 type="button"
+                onClick={() => handleSendEmailReport(detailedCorp)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 touch-btn shadow-md"
+              >
+                <Mail className="w-4 h-4" />
+                Enviar aos Responsáveis por E-mail
+              </button>
+
+              <button
+                type="button"
                 onClick={() => window.print()}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 touch-btn"
               >
@@ -780,7 +1149,7 @@ export const Convenios: React.FC = () => {
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 touch-btn shadow-md"
               >
                 <MessageSquare className="w-4 h-4" />
-                Enviar Prévia no WhatsApp
+                Enviar no WhatsApp
               </button>
             </div>
 

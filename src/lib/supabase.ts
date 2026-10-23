@@ -6,7 +6,8 @@ import type {
   CorporateClientContact,
   Product, 
   LedgerEntry, 
-  Invoice 
+  Invoice,
+  Profile
 } from '../types/database';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://supabase-supabasecardeneta.1cnep6.easypanel.host';
@@ -14,11 +15,10 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIU
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export const DEFAULT_TENANT_ID = 'a0000000-0000-0000-0000-000000000001';
-
 // --- PRODUTOS ---
-export async function fetchProducts(tenantId: string = DEFAULT_TENANT_ID): Promise<Product[]> {
+export async function fetchProducts(tenantId?: string): Promise<Product[]> {
   try {
+    if (!tenantId) return [];
     const { data, error } = await supabase
       .from('products')
       .select('*')
@@ -28,7 +28,7 @@ export async function fetchProducts(tenantId: string = DEFAULT_TENANT_ID): Promi
     if (error) throw error;
     return data || [];
   } catch (err) {
-    console.warn('Erro ao buscar produtos no Supabase, usando fallback local:', err);
+    console.warn('Erro ao buscar produtos no Supabase:', err);
     return [];
   }
 }
@@ -60,8 +60,9 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
 }
 
 // --- CONSUMIDORES ---
-export async function fetchConsumers(tenantId: string = DEFAULT_TENANT_ID): Promise<Consumer[]> {
+export async function fetchConsumers(tenantId?: string): Promise<Consumer[]> {
   try {
+    if (!tenantId) return [];
     const { data, error } = await supabase
       .from('consumers')
       .select(`
@@ -79,6 +80,7 @@ export async function fetchConsumers(tenantId: string = DEFAULT_TENANT_ID): Prom
       const { data: entries } = await supabase
         .from('ledger_entries')
         .select('total_amount')
+        .eq('tenant_id', tenantId)
         .eq('consumer_id', c.id)
         .eq('payer_type', 'INDIVIDUAL')
         .eq('status', 'PENDING');
@@ -187,8 +189,9 @@ export async function verifyEmailCode(consumerId: string, code: string): Promise
 }
 
 // --- EMPRESAS CONVENIADAS & CONTATOS ---
-export async function fetchCorporateClients(tenantId: string = DEFAULT_TENANT_ID): Promise<CorporateClient[]> {
+export async function fetchCorporateClients(tenantId?: string): Promise<CorporateClient[]> {
   try {
+    if (!tenantId) return [];
     const { data, error } = await supabase
       .from('corporate_clients')
       .select('*')
@@ -203,6 +206,7 @@ export async function fetchCorporateClients(tenantId: string = DEFAULT_TENANT_ID
       const { data: entries } = await supabase
         .from('ledger_entries')
         .select('total_amount')
+        .eq('tenant_id', tenantId)
         .eq('corporate_client_id', corp.id)
         .eq('payer_type', 'COMPANY')
         .eq('status', 'PENDING');
@@ -212,6 +216,7 @@ export async function fetchCorporateClients(tenantId: string = DEFAULT_TENANT_ID
       const { count } = await supabase
         .from('consumers')
         .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
         .eq('corporate_client_id', corp.id);
 
       corp.employee_count = count || 0;
@@ -289,6 +294,108 @@ export async function deleteCorporateContact(contactId: string): Promise<boolean
 
   if (error) throw error;
   return true;
+}
+
+// --- VÍNCULO DE RESPONSÁVEL FINANCEIRO / GESTOR DA EMPRESA ---
+export async function toggleConsumerResponsible(params: {
+  consumer: Consumer;
+  corpId: string;
+  makeResponsible: boolean;
+  tenantId: string;
+}): Promise<boolean> {
+  const { consumer, corpId, makeResponsible, tenantId } = params;
+
+  try {
+    if (makeResponsible) {
+      // 1. Inserir ou atualizar na tabela corporate_client_contacts
+      const cleanPhone = consumer.phone.trim();
+      const cleanEmail = consumer.email?.trim() || '';
+
+      const { data: existingContacts } = await supabase
+        .from('corporate_client_contacts')
+        .select('*')
+        .eq('corporate_client_id', corpId)
+        .or(`phone.eq.${cleanPhone}${cleanEmail ? `,email.eq.${cleanEmail}` : ''}`);
+
+      if (!existingContacts || existingContacts.length === 0) {
+        await supabase
+          .from('corporate_client_contacts')
+          .insert([{
+            corporate_client_id: corpId,
+            name: consumer.name,
+            phone: cleanPhone,
+            email: cleanEmail || null,
+            is_primary: false
+          }]);
+      }
+
+      // 2. Criar ou atualizar perfil com role COMPANY_MANAGER para login
+      const cleanNumPhone = cleanPhone.replace(/\D/g, '');
+      const { data: existingProfiles } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`phone.eq.${cleanPhone},phone.eq.${cleanNumPhone}${cleanEmail ? `,email.ilike.${cleanEmail}` : ''}`);
+
+      let profileId = consumer.profile_id;
+
+      if (existingProfiles && existingProfiles.length > 0) {
+        profileId = existingProfiles[0].id;
+        await supabase
+          .from('profiles')
+          .update({
+            role: 'COMPANY_MANAGER',
+            tenant_id: tenantId,
+            email: cleanEmail || existingProfiles[0].email,
+            full_name: consumer.name
+          })
+          .eq('id', profileId);
+      } else {
+        const { data: newProfile } = await supabase
+          .from('profiles')
+          .insert([{
+            tenant_id: tenantId,
+            full_name: consumer.name,
+            phone: cleanPhone,
+            email: cleanEmail || null,
+            role: 'COMPANY_MANAGER',
+            pin_hash: consumer.pin_hash || '1234'
+          }])
+          .select()
+          .single();
+        if (newProfile) profileId = newProfile.id;
+      }
+
+      // 3. Atualizar o consumidor com o profile_id
+      if (profileId) {
+        await supabase
+          .from('consumers')
+          .update({ profile_id: profileId })
+          .eq('id', consumer.id);
+      }
+    } else {
+      // Remover vínculo de responsável
+      const cleanPhone = consumer.phone.trim();
+      const cleanEmail = consumer.email?.trim() || '';
+
+      await supabase
+        .from('corporate_client_contacts')
+        .delete()
+        .eq('corporate_client_id', corpId)
+        .or(`phone.eq.${cleanPhone}${cleanEmail ? `,email.eq.${cleanEmail}` : ''}`);
+
+      if (consumer.profile_id) {
+        await supabase
+          .from('profiles')
+          .update({ role: 'CONSUMER' })
+          .eq('id', consumer.profile_id);
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.error('Erro ao alternar status de responsável:', err);
+    throw err;
+  }
 }
 
 // --- LANÇAMENTO DE VENDA MISTA (SPLIT AUTOMÁTICO) ---
@@ -507,8 +614,9 @@ export async function verifyConsumerPin(consumerId: string, pin: string): Promis
 }
 
 // --- FATURAS E FECHAMENTO DE CICLO ---
-export async function fetchInvoices(tenantId: string = DEFAULT_TENANT_ID): Promise<Invoice[]> {
+export async function fetchInvoices(tenantId?: string): Promise<Invoice[]> {
   try {
+    if (!tenantId) return [];
     const { data, error } = await supabase
       .from('invoices')
       .select(`
@@ -527,7 +635,10 @@ export async function fetchInvoices(tenantId: string = DEFAULT_TENANT_ID): Promi
   }
 }
 
-export async function closeBillingCycle(tenantId: string = DEFAULT_TENANT_ID, dueDays: number = 5) {
+export async function closeBillingCycle(tenantId: string, dueDays: number = 5) {
+  if (!tenantId) {
+    throw new Error('Identificador do restaurante (tenant_id) obrigatório para fechar o ciclo.');
+  }
   const { data, error } = await supabase.rpc('close_cycle_and_generate_invoices', {
     p_tenant_id: tenantId,
     p_due_days: dueDays
@@ -658,7 +769,7 @@ export async function registerTenantWithMaster(params: {
 }
 
 // --- SUPERADMIN PLATAFORMA CADERNETA ---
-export async function fetchAllTenantsWithStats(): Promise<Array<Tenant & { totalVolume?: number; consumerCount?: number; corpCount?: number }>> {
+export async function fetchAllTenantsWithStats(): Promise<Array<Tenant & { totalVolume?: number; consumerCount?: number; corpCount?: number; profileCount?: number }>> {
   const { data: tenants, error } = await supabase
     .from('tenants')
     .select('*')
@@ -691,15 +802,48 @@ export async function fetchAllTenantsWithStats(): Promise<Array<Tenant & { total
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', t.id);
 
+    // Contagem de operadores / perfis de equipe
+    const { count: pCount } = await supabase
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', t.id);
+
+    // Resgatar logo cacheado se não estiver na tabela
+    let logoUrl = t.logo_url;
+    if (!logoUrl && typeof window !== 'undefined') {
+      logoUrl = localStorage.getItem(`tenant_logo_${t.id}`) || undefined;
+    }
+
     result.push({
       ...t,
+      logo_url: logoUrl,
       totalVolume,
       consumerCount: cCount || 0,
-      corpCount: corpCount || 0
+      corpCount: corpCount || 0,
+      profileCount: pCount || 0
     });
   }
 
   return result;
+}
+
+export async function fetchTenantProfiles(tenantId: string): Promise<Profile[]> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar perfis do restaurante:', error);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error('Falha ao buscar perfis:', err);
+    return [];
+  }
 }
 
 export async function updateTenantSubscription(
@@ -722,38 +866,90 @@ export async function updateTenantSubscription(
 }
 
 // --- DADOS DO RESTAURANTE / TENANT ---
-export async function fetchTenant(tenantId: string = DEFAULT_TENANT_ID): Promise<Tenant | null> {
-  const { data, error } = await supabase
-    .from('tenants')
-    .select('*')
-    .eq('id', tenantId)
-    .single();
+export async function fetchTenant(tenantId?: string): Promise<Tenant | null> {
+  try {
+    let tenant: Tenant | null = null;
+    if (tenantId) {
+      const { data } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('id', tenantId)
+        .maybeSingle();
 
-  if (error) {
-    return {
-      id: DEFAULT_TENANT_ID,
-      created_at: new Date().toISOString(),
-      trade_name: 'Restaurante & Bar Sabor da Vila',
-      document_number: '12.345.678/0001-90',
-      phone: '(11) 98765-4321',
-      pix_key: 'restaurante@sabordavila.com.br',
-      pix_key_type: 'EMAIL',
-      subscription_status: 'ACTIVE'
-    };
+      if (data) tenant = data;
+    }
+
+    if (!tenant) {
+      // Se não passou tenantId ou não encontrou, busca o primeiro restaurante cadastrado
+      const { data: firstTenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (firstTenant) tenant = firstTenant;
+    }
+
+    if (tenant && typeof window !== 'undefined') {
+      if (!tenant.logo_url) {
+        const cached = localStorage.getItem(`tenant_logo_${tenant.id}`);
+        if (cached) tenant.logo_url = cached;
+      }
+    }
+
+    return tenant || null;
+  } catch (err) {
+    console.warn('Erro ao buscar restaurante no Supabase:', err);
+    return null;
   }
-  return data;
 }
 
 export async function updateTenant(tenantId: string, updates: Partial<Tenant>): Promise<Tenant | null> {
-  const { data, error } = await supabase
-    .from('tenants')
-    .update(updates)
-    .eq('id', tenantId)
-    .select()
-    .single();
+  // Salvar logo no localStorage se fornecido
+  if (typeof window !== 'undefined') {
+    if (updates.logo_url !== undefined) {
+      if (updates.logo_url) {
+        localStorage.setItem(`tenant_logo_${tenantId}`, updates.logo_url);
+      } else {
+        localStorage.removeItem(`tenant_logo_${tenantId}`);
+      }
+    }
+  }
 
-  if (error) throw error;
-  return data;
+  try {
+    const { data, error } = await supabase
+      .from('tenants')
+      .update(updates)
+      .eq('id', tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      // Se coluna logo_url não existir ainda no banco (código 42703), salva os outros dados
+      if (error.code === '42703' && 'logo_url' in updates) {
+        const { logo_url, ...restUpdates } = updates;
+        const { data: retryData, error: retryErr } = await supabase
+          .from('tenants')
+          .update(restUpdates)
+          .eq('id', tenantId)
+          .select()
+          .single();
+
+        if (retryErr) throw retryErr;
+        return { ...retryData, logo_url: updates.logo_url };
+      }
+      throw error;
+    }
+
+    return {
+      ...data,
+      logo_url: data.logo_url || updates.logo_url || (typeof window !== 'undefined' ? localStorage.getItem(`tenant_logo_${tenantId}`) || undefined : undefined)
+    };
+  } catch (err) {
+    console.error('Erro ao atualizar restaurante:', err);
+    throw err;
+  }
 }
 
 export async function updateInvoice(invoiceId: string, updates: Partial<Invoice>): Promise<Invoice | null> {

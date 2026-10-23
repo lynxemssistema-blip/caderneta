@@ -11,12 +11,16 @@ import {
   Utensils
 } from 'lucide-react';
 import type { Product, ProductCategory, Tenant } from '../types/database';
-import { fetchProducts, createProduct, updateProduct, fetchTenant, DEFAULT_TENANT_ID } from '../lib/supabase';
+import { fetchProducts, createProduct, updateProduct, fetchTenant } from '../lib/supabase';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
 import { ReportHeader } from '../components/ReportHeader';
 
-export const Produtos: React.FC = () => {
+interface ProdutosProps {
+  tenantId?: string;
+}
+
+export const Produtos: React.FC<ProdutosProps> = ({ tenantId }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
@@ -33,12 +37,12 @@ export const Produtos: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId]);
 
   const loadData = async () => {
     const [pList, tData] = await Promise.all([
-      fetchProducts(),
-      fetchTenant(DEFAULT_TENANT_ID)
+      fetchProducts(tenantId),
+      fetchTenant(tenantId)
     ]);
     setProducts(pList);
     setTenant(tData);
@@ -49,10 +53,16 @@ export const Produtos: React.FC = () => {
     const numPrice = parseFloat(price.replace(',', '.'));
     if (!name.trim() || isNaN(numPrice) || numPrice <= 0) return;
 
+    const targetTenantId = tenantId || tenant?.id;
+    if (!targetTenantId) {
+      alert('Nenhum restaurante ativo selecionado para cadastrar produtos.');
+      return;
+    }
+
     sound.playKeyClick();
     try {
       await createProduct({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: targetTenantId,
         name: name.trim(),
         category,
         price: numPrice,

@@ -5,24 +5,38 @@ import {
   Search, 
   MessageSquare, 
   DollarSign,
-  Eye
+  Eye,
+  UserPlus,
+  Send,
+  X,
+  CheckCircle2,
+  Crown
 } from 'lucide-react';
 import type { Consumer, CorporateClient, Tenant } from '../types/database';
 import { 
   fetchConsumers, 
   fetchCorporateClients, 
   fetchTenant, 
-  settleConsumerDirectly 
+  settleConsumerDirectly,
+  registerConsumer,
+  toggleConsumerResponsible 
 } from '../lib/supabase';
+import { sendInviteEmail } from '../lib/emailService';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
-import { ReportHeader } from '../components/ReportHeader';
+
 
 interface CadernetasProps {
+  tenantId?: string;
+  activeTenant?: Tenant | null;
   onViewStatement: (consumerId: string) => void;
 }
 
-export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
+export const Cadernetas: React.FC<CadernetasProps> = ({ 
+  tenantId, 
+  activeTenant, 
+  onViewStatement 
+}) => {
   const [tab, setTab] = useState<'INDIVIDUAL' | 'CORPORATE'>('INDIVIDUAL');
   const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
   const [consumers, setConsumers] = useState<Consumer[]>([]);
@@ -37,19 +51,43 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
   const [settleMethod, setSettleMethod] = useState<'PIX' | 'DINHEIRO' | 'CARTAO'>('PIX');
   const [isSettling, setIsSettling] = useState(false);
 
+  // Modal de Convidar Cliente
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteName, setInviteName] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteLimit, setInviteLimit] = useState('200.00');
+  const [inviteCorpId, setInviteCorpId] = useState('');
+  const [inviteIsResponsible, setInviteIsResponsible] = useState(false);
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId, activeTenant?.id]);
 
   const loadData = async () => {
+    const targetTenantId = tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      setConsumers([]);
+      setCorps([]);
+      setTenant(null);
+      return;
+    }
     const [cData, corpData, tData] = await Promise.all([
-      fetchConsumers(),
-      fetchCorporateClients(),
-      fetchTenant()
+      fetchConsumers(targetTenantId),
+      fetchCorporateClients(targetTenantId),
+      fetchTenant(targetTenantId)
     ]);
     setConsumers(cData);
     setCorps(corpData);
-    setTenant(tData);
+    setTenant(tData || activeTenant || null);
+  };
+
+  const showNotification = (msg: string) => {
+    sound.playSuccessChime();
+    setFeedback(msg);
+    setTimeout(() => setFeedback(null), 5000);
   };
 
   const getConsumerStatus = (c: Consumer): { color: 'GREEN' | 'YELLOW' | 'RED'; label: string } => {
@@ -100,28 +138,29 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
     return true;
   });
 
-  const handleSendWhatsApp = (name: string, phone: string, amount: number) => {
+  const handleOpenSettle = (c: Consumer) => {
     sound.playKeyClick();
-    const cleanPhone = phone.replace(/\D/g, '');
-    const formattedPhone = cleanPhone.length <= 11 ? `55${cleanPhone}` : cleanPhone;
-    
-    const message = `Olá, *${name}*! Tudo bem? 🍽️\n\nAqui é do *${tenant?.trade_name || 'Restaurante Sabor da Vila'}*.\nPassando para enviar o resumo da sua caderneta:\n\n*Saldo Atual:* R$ ${amount.toFixed(2)}\n*Chave Pix:* ${tenant?.pix_key || 'restaurante@sabordavila.com.br'} (${tenant?.pix_key_type || 'EMAIL'})\n\nMuito obrigado pela parceria e preferência! 😊`;
-
-    const encoded = encodeURIComponent(message);
-    window.open(`https://wa.me/${formattedPhone}?text=${encoded}`, '_blank');
+    setSettleConsumer(c);
+    setSettleAmount((c.total_pending || 0).toFixed(2));
   };
 
   const handleConfirmSettle = async () => {
     if (!settleConsumer) return;
-    const amount = parseFloat(settleAmount.replace(',', '.'));
-    if (isNaN(amount) || amount <= 0) return;
+    const amt = parseFloat(settleAmount.replace(',', '.'));
+    if (isNaN(amt) || amt <= 0) {
+      alert('Informe um valor válido.');
+      return;
+    }
 
+    sound.playKeyClick();
     setIsSettling(true);
+
     try {
-      await settleConsumerDirectly(settleConsumer.id, amount, settleMethod);
+      await settleConsumerDirectly(settleConsumer.id, amt, settleMethod);
+
       sound.playSuccessChime();
+
       setSettleConsumer(null);
-      setSettleAmount('');
       loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Falha na baixa';
@@ -131,52 +170,156 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
     }
   };
 
+  const handleSendWhatsApp = (c: Consumer) => {
+    const phone = c.phone.replace(/\D/g, '');
+    const total = Number(c.total_pending || 0).toFixed(2);
+    const pix = tenant?.pix_key || '';
+
+    const text = encodeURIComponent(
+      `Olá, *${c.name}*!\n\n` +
+      `Aqui é do *${tenant?.trade_name || 'Restaurante'}*.\n` +
+      `Passando para lembrar do seu saldo em aberto na caderneta:\n` +
+      `💰 *Total:* R$ ${total}\n\n` +
+      (pix ? `🔑 *Chave Pix:* ${pix} (${tenant?.pix_key_type || 'Chave'})\n\n` : '') +
+      `Qualquer dúvida estamos à disposição!`
+    );
+
+    const url = phone ? `https://wa.me/55${phone}?text=${text}` : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank');
+  };
+
+  const handleSendInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteName.trim() || !invitePhone.trim() || !inviteEmail.trim()) {
+      alert('Nome, telefone e e-mail são obrigatórios.');
+      return;
+    }
+
+    sound.playKeyClick();
+    setSendingInvite(true);
+    const targetTenantId = tenantId || tenant?.id || activeTenant?.id;
+    if (!targetTenantId) {
+      alert('Nenhum restaurante ativo selecionado para enviar convite.');
+      setSendingInvite(false);
+      return;
+    }
+
+    try {
+      // 1. Cadastrar consumidor
+      const newConsumer = await registerConsumer({
+        tenant_id: targetTenantId,
+        name: inviteName.trim(),
+        phone: invitePhone.trim(),
+        email: inviteEmail.trim(),
+        pin: '1234',
+        corporate_client_id: inviteCorpId || undefined
+      });
+
+      if (!newConsumer?.id) throw new Error('Falha ao cadastrar cliente');
+
+      // 2. Se for de empresa e marcado como responsável
+      if (inviteCorpId && inviteIsResponsible) {
+        await toggleConsumerResponsible({
+          consumer: { ...newConsumer, name: inviteName.trim(), phone: invitePhone.trim(), email: inviteEmail.trim() },
+          corpId: inviteCorpId,
+          makeResponsible: true,
+          tenantId: targetTenantId
+        });
+      }
+
+      // 3. Disparar e-mail de convite
+      const inviteUrl = `${window.location.origin}/?invite=true&tenant=${targetTenantId}&email=${encodeURIComponent(inviteEmail.trim())}&name=${encodeURIComponent(inviteName.trim())}${inviteCorpId ? `&corp=${inviteCorpId}` : ''}`;
+      
+      await sendInviteEmail({
+        email: inviteEmail.trim(),
+        name: inviteName.trim(),
+        restaurantName: tenant?.trade_name || 'Restaurante Parceiro',
+        inviteUrl,
+        creditLimit: parseFloat(inviteLimit.replace(',', '.')) || 200
+      });
+
+      showNotification(`✉️ Convite enviado com sucesso para ${inviteEmail}!`);
+      setIsInviting(false);
+      setInviteName('');
+      setInvitePhone('');
+      setInviteEmail('');
+      setInviteLimit('200.00');
+      setInviteCorpId('');
+      setInviteIsResponsible(false);
+
+      loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Falha ao enviar convite';
+      alert(msg);
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-3 py-4 sm:px-6 space-y-6">
       
-      {/* Cabeçalho da Impressão (Exclusivo para PDF / Papel A4) */}
-      <div className="print-only">
-        <ReportHeader
-          tenant={tenant}
-          title={tab === 'INDIVIDUAL' ? "Relatório Geral de Cadernetas (Pessoas Físicas)" : "Relatório Geral de Convênios Empresariais"}
-          subtitle="Posição financeira consolidada de contas fiado em aberto"
-        />
-      </div>
+      {/* Toast Feedback */}
+      {feedback && (
+        <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-xs sm:text-sm flex items-center gap-2 animate-pop">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+          {feedback}
+        </div>
+      )}
 
-      {/* Cabeçalho na Tela */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 no-print">
+      {/* Topo Oficial com Header e Ações */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-black text-slate-100 flex items-center gap-2">
-            Gestão de Cadernetas & Fiado
+            <Building2 className="w-7 h-7 text-emerald-400" />
+            Cadernetas & Fiado Digital
           </h2>
           <p className="text-xs text-slate-400">
-            Acompanhamento de saldos devedores, limites e cobranças rápidas via WhatsApp.
+            Acompanhe o saldo dos clientes individuais e convênios corporativos.
           </p>
         </div>
 
-        <div className="flex items-center gap-3 self-start sm:self-auto flex-wrap">
-          <ViewToggle
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap no-print">
+          <ViewToggle 
+            viewMode={viewMode} 
+            onViewModeChange={setViewMode} 
             onPrint={() => window.print()}
-            printLabel="Exportar PDF"
+            printLabel="Exportar Relatório"
           />
 
-          {/* Abas: Empresas vs Pessoas Físicas */}
-          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
+          {/* Botão de Convidar Cliente */}
+          <button
+            onClick={() => {
+              sound.playKeyClick();
+              setIsInviting(true);
+            }}
+            className="touch-btn px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg shadow-emerald-950/40"
+          >
+            <UserPlus className="w-4 h-4" />
+            Convidar Cliente
+          </button>
+
+          {/* Seletor de Tipo: PF vs Empresas */}
+          <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
             <button
-              onClick={() => setTab('INDIVIDUAL')}
-              className={`touch-btn flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              onClick={() => {
+                sound.playKeyClick();
+                setTab('INDIVIDUAL');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                 tab === 'INDIVIDUAL'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <User className="w-3.5 h-3.5" /> Pessoas Físicas ({consumers.length})
+              <User className="w-3.5 h-3.5" /> Clientes ({consumers.length})
             </button>
             <button
-              onClick={() => setTab('CORPORATE')}
-              className={`touch-btn flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              onClick={() => {
+                sound.playKeyClick();
+                setTab('CORPORATE');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                 tab === 'CORPORATE'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
@@ -201,7 +344,7 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
           />
         </div>
 
-        {/* Filtros de Status (Cores) */}
+        {/* Filtros de Status */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
           <button
             onClick={() => setStatusFilter('ALL')}
@@ -259,83 +402,75 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
               return (
                 <div
                   key={consumer.id}
-                  className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 hover:border-slate-700 transition-all shadow-lg flex flex-col justify-between"
+                  className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 hover:border-slate-700 transition-all shadow-xl"
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl bg-slate-800 flex items-center justify-center font-bold text-white text-base">
-                          {consumer.name.charAt(0)}
-                        </div>
-                        <div>
-                          <h3 className="font-extrabold text-slate-100 text-base">{consumer.name}</h3>
-                          <p className="text-xs text-slate-400">{consumer.phone}</p>
-                        </div>
-                      </div>
-
-                      <span
-                        className={`text-[10px] font-black px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
-                          st.color === 'GREEN'
-                            ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
-                            : st.color === 'YELLOW'
-                            ? 'bg-amber-950/80 text-amber-300 border border-amber-500/40'
-                            : 'bg-rose-950/80 text-rose-400 border border-rose-500/40'
-                        }`}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                        {st.label}
-                      </span>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-extrabold text-slate-100 text-base">{consumer.name}</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">{consumer.phone}</p>
+                      {consumer.corporate_client && (
+                        <span className="text-[10px] text-blue-400 font-bold block mt-1 flex items-center gap-1">
+                          <Building2 className="w-3 h-3" />
+                          {consumer.corporate_client.company_name}
+                        </span>
+                      )}
                     </div>
 
-                    {/* Barra de Progresso do Limite */}
-                    <div>
-                      <div className="flex justify-between text-xs font-bold mb-1">
-                        <span className="text-slate-400">Saldo Devedor:</span>
-                        <span className={pending > limit ? 'text-rose-400' : 'text-slate-200'}>
-                          R$ {pending.toFixed(2)} / R$ {limit.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            st.color === 'GREEN'
-                              ? 'bg-emerald-500'
-                              : st.color === 'YELLOW'
-                              ? 'bg-amber-500'
-                              : 'bg-rose-500'
-                          }`}
-                          style={{ width: `${percent}%` }}
-                        />
-                      </div>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                      st.color === 'GREEN'
+                        ? 'bg-emerald-950 text-emerald-400 border-emerald-500/30'
+                        : st.color === 'YELLOW'
+                        ? 'bg-amber-950 text-amber-400 border-amber-500/30'
+                        : 'bg-rose-950 text-rose-400 border-rose-500/30'
+                    }`}>
+                      {st.label}
+                    </span>
+                  </div>
+
+                  {/* Barra de Progresso do Limite */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-slate-400">Em Aberto:</span>
+                      <span className="text-emerald-400">R$ {pending.toFixed(2)}</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          percent > 90 ? 'bg-rose-500' : percent > 75 ? 'bg-amber-500' : 'bg-emerald-500'
+                        }`}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500">
+                      <span>Limite: R$ {limit.toFixed(2)}</span>
+                      <span>{percent}% usado</span>
                     </div>
                   </div>
 
                   {/* Ações */}
-                  <div className="flex gap-2 pt-3 border-t border-slate-800 no-print">
-                    <button
-                      onClick={() => handleSendWhatsApp(consumer.name, consumer.phone, pending)}
-                      className="touch-btn flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-emerald-400 font-bold text-xs flex items-center justify-center gap-1.5 border border-slate-700"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5" /> Cobrar
-                    </button>
-
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
                     <button
                       onClick={() => onViewStatement(consumer.id)}
-                      className="touch-btn p-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs border border-slate-700"
-                      title="Ver Extrato"
+                      className="touch-btn flex-1 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1"
                     >
-                      <Eye className="w-4 h-4" />
+                      <Eye className="w-3.5 h-3.5" />
+                      Extrato
                     </button>
 
                     <button
-                      onClick={() => {
-                        sound.playKeyClick();
-                        setSettleConsumer(consumer);
-                        setSettleAmount(pending.toString());
-                      }}
-                      className="touch-btn px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md"
+                      onClick={() => handleOpenSettle(consumer)}
+                      className="touch-btn flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-md"
                     >
-                      Baixa
+                      <DollarSign className="w-3.5 h-3.5" />
+                      Dar Baixa
+                    </button>
+
+                    <button
+                      onClick={() => handleSendWhatsApp(consumer)}
+                      className="p-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-xl"
+                      title="Enviar Cobrança no WhatsApp"
+                    >
+                      <MessageSquare className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -343,50 +478,44 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
             })}
           </div>
         ) : (
-          /* MODO TABELA PESSOAS FÍSICAS */
+          /* MODO TABELA */
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
                 <thead className="bg-slate-850 text-slate-400 uppercase font-bold border-b border-slate-800">
                   <tr>
                     <th className="px-4 py-3.5">Nome do Cliente</th>
-                    <th className="px-4 py-3.5">WhatsApp / Telefone</th>
-                    <th className="px-4 py-3.5">Empresa Vinculada</th>
+                    <th className="px-4 py-3.5">Telefone</th>
+                    <th className="px-4 py-3.5">Empresa</th>
                     <th className="px-4 py-3.5 text-right">Saldo Devedor</th>
-                    <th className="px-4 py-3.5 text-right">Limite de Crédito</th>
+                    <th className="px-4 py-3.5 text-right">Limite</th>
                     <th className="px-4 py-3.5 text-center">Status</th>
                     <th className="px-4 py-3.5 text-center no-print">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 font-medium">
-                  {filteredConsumers.map((c) => {
-                    const st = getConsumerStatus(c);
-                    const pending = c.total_pending || 0;
-                    const limit = c.individual_credit_limit || 200;
-
+                  {filteredConsumers.map((consumer) => {
+                    const st = getConsumerStatus(consumer);
                     return (
-                      <tr key={c.id} className="hover:bg-slate-850/50 transition-colors">
-                        <td className="px-4 py-3 font-bold text-white flex items-center gap-2">
-                          <User className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                          {c.name}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">{c.phone}</td>
+                      <tr key={consumer.id} className="hover:bg-slate-850/50 transition-colors">
+                        <td className="px-4 py-3 font-bold text-white">{consumer.name}</td>
+                        <td className="px-4 py-3 text-slate-400">{consumer.phone}</td>
                         <td className="px-4 py-3 text-slate-400">
-                          {c.corporate_client?.company_name || 'Particular (Avulso)'}
+                          {consumer.corporate_client?.company_name || '-'}
                         </td>
-                        <td className="px-4 py-3 text-right font-black text-amber-400 text-sm">
-                          R$ {pending.toFixed(2)}
+                        <td className="px-4 py-3 text-right font-black text-emerald-400 text-sm">
+                          R$ {Number(consumer.total_pending || 0).toFixed(2)}
                         </td>
-                        <td className="px-4 py-3 text-right text-slate-400 font-bold">
-                          R$ {limit.toFixed(2)}
+                        <td className="px-4 py-3 text-right text-slate-400">
+                          R$ {Number(consumer.individual_credit_limit || 200).toFixed(2)}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
                             st.color === 'GREEN'
-                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30'
+                              ? 'bg-emerald-950 text-emerald-400 border-emerald-500/30'
                               : st.color === 'YELLOW'
-                              ? 'bg-amber-950 text-amber-300 border border-amber-500/30'
-                              : 'bg-rose-950 text-rose-300 border border-rose-500/30'
+                              ? 'bg-amber-950 text-amber-400 border-amber-500/30'
+                              : 'bg-rose-950 text-rose-400 border-rose-500/30'
                           }`}>
                             {st.label}
                           </span>
@@ -394,31 +523,25 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
                         <td className="px-4 py-3 text-center no-print">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
-                              type="button"
-                              onClick={() => handleSendWhatsApp(c.name, c.phone, pending)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400"
-                              title="Cobrar via WhatsApp"
-                            >
-                              <MessageSquare className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onViewStatement(c.id)}
+                              onClick={() => onViewStatement(consumer.id)}
                               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
                               title="Ver Extrato"
                             >
                               <Eye className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              type="button"
-                              onClick={() => {
-                                sound.playKeyClick();
-                                setSettleConsumer(c);
-                                setSettleAmount(pending.toString());
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                              onClick={() => handleOpenSettle(consumer)}
+                              className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"
+                              title="Dar Baixa"
                             >
-                              Baixa
+                              <DollarSign className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleSendWhatsApp(consumer)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400"
+                              title="Cobrar no WhatsApp"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>
@@ -434,133 +557,162 @@ export const Cadernetas: React.FC<CadernetasProps> = ({ onViewStatement }) => {
 
       {/* ABA 2: EMPRESAS CONVENIADAS */}
       {tab === 'CORPORATE' && (
-        viewMode === 'CARDS' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredCorps.map((corp) => {
-              const st = getCorpStatus(corp);
-              const pending = corp.total_pending || 0;
-
-              return (
-                <div
-                  key={corp.id}
-                  className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 hover:border-slate-700 transition-all shadow-lg"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-extrabold text-slate-100 text-lg flex items-center gap-2">
-                        <Building2 className="w-5 h-5 text-emerald-400" />
-                        {corp.company_name}
-                      </h3>
-                      <p className="text-xs text-slate-400 mt-0.5">CNPJ: {corp.cnpj || 'Não informado'}</p>
-                    </div>
-
-                    <span
-                      className={`text-[11px] font-black px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
-                        st.color === 'GREEN'
-                          ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
-                          : st.color === 'YELLOW'
-                          ? 'bg-amber-950/80 text-amber-300 border border-amber-500/40'
-                          : 'bg-rose-950/80 text-rose-400 border border-rose-500/40'
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      {st.label}
-                    </span>
-                  </div>
-
-                  {/* Métricas do Convênio */}
-                  <div className="grid grid-cols-3 gap-2 p-3 rounded-2xl bg-slate-850 border border-slate-800 text-center">
-                    <div>
-                      <span className="text-[10px] text-slate-500 font-bold block uppercase">Ciclo</span>
-                      <span className="text-xs font-black text-slate-200">{corp.billing_cycle}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-500 font-bold block uppercase">Pagamento</span>
-                      <span className="text-xs font-black text-slate-200">{corp.payment_weekday || `Dia ${corp.closing_day}`}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-500 font-bold block uppercase">Funcionários</span>
-                      <span className="text-xs font-black text-slate-200">{corp.employee_count || 0}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                    <span className="text-xs text-slate-400 font-bold">TOTAL ACUMULADO NO CICLO:</span>
-                    <span className="text-xl font-black text-emerald-400">
-                      R$ {pending.toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div className="flex gap-2 pt-2 no-print">
-                    <button
-                      onClick={() => {
-                        const msg = `Olá, equipe *${corp.company_name}*! Segue o extrato parcial de alimentação do ciclo:\n\n*Total Acumulado:* R$ ${pending.toFixed(2)}\n*Chave Pix do Restaurante:* ${tenant?.pix_key}\n\nConferir: https://caderneta.lynxems.com.br`;
-                        window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-                      }}
-                      className="touch-btn flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-emerald-400 font-bold text-xs flex items-center justify-center gap-1.5 border border-slate-700"
-                    >
-                      <MessageSquare className="w-4 h-4" /> Cobrança WhatsApp
-                    </button>
-                  </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredCorps.map((corp) => (
+            <div
+              key={corp.id}
+              className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 hover:border-slate-700 transition-all shadow-xl"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="font-extrabold text-slate-100 text-base flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-emerald-400" />
+                    {corp.company_name}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">CNPJ: {corp.cnpj || 'Não informado'}</p>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* MODO TABELA EMPRESAS CONVENIADAS */
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-850 text-slate-400 uppercase font-bold border-b border-slate-800">
-                  <tr>
-                    <th className="px-4 py-3.5">Empresa</th>
-                    <th className="px-4 py-3.5">CNPJ</th>
-                    <th className="px-4 py-3.5">Ciclo</th>
-                    <th className="px-4 py-3.5">Vencimento Semanal/Mensal</th>
-                    <th className="px-4 py-3.5">Colaboradores</th>
-                    <th className="px-4 py-3.5 text-right">Saldo do Ciclo</th>
-                    <th className="px-4 py-3.5 text-center no-print">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/80 font-medium">
-                  {filteredCorps.map((corp) => {
-                    const pending = corp.total_pending || 0;
-                    return (
-                      <tr key={corp.id} className="hover:bg-slate-850/50 transition-colors">
-                        <td className="px-4 py-3 font-bold text-white flex items-center gap-2">
-                          <Building2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                          {corp.company_name}
-                        </td>
-                        <td className="px-4 py-3 text-slate-400">{corp.cnpj || '-'}</td>
-                        <td className="px-4 py-3 font-bold text-slate-300">{corp.billing_cycle}</td>
-                        <td className="px-4 py-3 text-amber-400 font-bold">
-                          {corp.payment_weekday || `Dia ${corp.closing_day}`}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">{corp.employee_count || 0}</td>
-                        <td className="px-4 py-3 text-right font-black text-emerald-400 text-sm">
-                          R$ {pending.toFixed(2)}
-                        </td>
-                        <td className="px-4 py-3 text-center no-print">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const msg = `Olá, equipe *${corp.company_name}*! Segue o extrato parcial de alimentação do ciclo: Total R$ ${pending.toFixed(2)}`;
-                              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-                            }}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400"
-                            title="Cobrar no WhatsApp"
-                          >
-                            <MessageSquare className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+
+                <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-500/30">
+                  {corp.billing_cycle}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-850 border border-slate-800 flex justify-between items-center text-xs">
+                <span className="text-slate-400">Total Acumulado:</span>
+                <span className="text-lg font-black text-emerald-400">
+                  R$ {Number(corp.total_pending || 0).toFixed(2)}
+                </span>
+              </div>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* MODAL DE CONVIDAR CLIENTE / COLABORADOR */}
+      {isInviting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-pop">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl text-left space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-emerald-400" />
+                Convidar Cliente para a Caderneta
+              </h3>
+              <button
+                onClick={() => setIsInviting(false)}
+                className="p-1.5 rounded-full bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSendInviteSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-400 block mb-1">Nome Completo *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: João da Silva"
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">Telefone / WhatsApp *</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="(11) 98765-4321"
+                    value={invitePhone}
+                    onChange={(e) => setInvitePhone(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">E-mail para Convite *</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="joao@email.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">Limite Individual (R$)</label>
+                  <input
+                    type="text"
+                    value={inviteLimit}
+                    onChange={(e) => setInviteLimit(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">Empresa (Opcional)</label>
+                  <select
+                    value={inviteCorpId}
+                    onChange={(e) => setInviteCorpId(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="">Nenhuma (Cliente Individual)</option>
+                    {corps.map((c) => (
+                      <option key={c.id} value={c.id}>🏢 {c.company_name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {inviteCorpId && (
+                <div className="p-3 bg-amber-950/20 border border-amber-500/30 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Crown className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-amber-200 block">
+                        Marcar como Responsável pelo Pagamento da Empresa?
+                      </span>
+                      <span className="text-[10px] text-amber-300/80">
+                        Recebe faturas, recibos e gerencia os colaboradores.
+                      </span>
+                    </div>
+                  </div>
+
+                  <input
+                    type="checkbox"
+                    checked={inviteIsResponsible}
+                    onChange={(e) => setInviteIsResponsible(e.target.checked)}
+                    className="w-4 h-4 text-amber-500 rounded focus:ring-amber-400"
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsInviting(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={sendingInvite}
+                  className="touch-btn px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 shadow-md disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {sendingInvite ? 'Enviando Convite...' : 'Enviar Convite por E-mail'}
+                </button>
+              </div>
+            </form>
           </div>
-        )
+        </div>
       )}
 
       {/* Modal de Baixa de Saldo */}

@@ -15,12 +15,17 @@ import {
   fetchConsumers, 
   fetchProducts, 
   fetchConsumerConsumptionHistory, 
-  registerSaleSplit,
-  DEFAULT_TENANT_ID 
+  registerSaleSplit 
 } from '../lib/supabase';
 import { sound } from '../lib/sound';
+import type { Tenant } from '../types/database';
 
-export const PortalConsumidor: React.FC = () => {
+interface PortalConsumidorProps {
+  tenantId?: string;
+  activeTenant?: Tenant | null;
+}
+
+export const PortalConsumidor: React.FC<PortalConsumidorProps> = ({ tenantId, activeTenant }) => {
   const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [selectedConsumer, setSelectedConsumer] = useState<Consumer | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,12 +40,18 @@ export const PortalConsumidor: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId, activeTenant?.id]);
 
   const loadData = async () => {
+    const targetTenantId = tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      setConsumers([]);
+      setProducts([]);
+      return;
+    }
     const [cList, pList] = await Promise.all([
-      fetchConsumers(),
-      fetchProducts()
+      fetchConsumers(targetTenantId),
+      fetchProducts(targetTenantId)
     ]);
     setConsumers(cList);
     setProducts(pList.filter((p) => p.is_active));
@@ -89,10 +100,16 @@ export const PortalConsumidor: React.FC = () => {
     setOrdering(true);
     setOrderSuccess('');
 
+    const targetTenantId = selectedConsumer.tenant_id || tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      alert('Nenhum restaurante ativo identificado para processar o pedido.');
+      return;
+    }
+
     try {
       sound.playKeyClick();
       await registerSaleSplit({
-        tenantId: DEFAULT_TENANT_ID,
+        tenantId: targetTenantId,
         consumer: selectedConsumer,
         items: cart,
         extraPaidNow: false,
@@ -107,7 +124,7 @@ export const PortalConsumidor: React.FC = () => {
       // Recarregar histórico e dados do consumidor
       const [hist, cList] = await Promise.all([
         fetchConsumerConsumptionHistory(selectedConsumer.id),
-        fetchConsumers()
+        fetchConsumers(targetTenantId)
       ]);
       setHistory(hist);
       setConsumers(cList);

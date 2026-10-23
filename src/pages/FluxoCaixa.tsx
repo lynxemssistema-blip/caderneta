@@ -11,25 +11,32 @@ import {
 import { fetchInvoices, fetchConsumers, fetchCorporateClients, fetchTenant } from '../lib/supabase';
 import type { Invoice, Consumer, CorporateClient, Tenant } from '../types/database';
 
-export const FluxoCaixa: React.FC = () => {
+interface FluxoCaixaProps {
+  tenantId?: string;
+  activeTenant?: Tenant | null;
+}
+
+export const FluxoCaixa: React.FC<FluxoCaixaProps> = ({ tenantId, activeTenant }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [corps, setCorps] = useState<CorporateClient[]>([]);
   const [tenant, setTenant] = useState<Tenant | null>(null);
 
   useEffect(() => {
+    const targetTenantId = tenantId || activeTenant?.id;
     Promise.all([
-      fetchInvoices(),
-      fetchConsumers(),
-      fetchCorporateClients(),
-      fetchTenant()
+      fetchInvoices(targetTenantId),
+      fetchConsumers(targetTenantId),
+      fetchCorporateClients(targetTenantId),
+      fetchTenant(targetTenantId)
     ]).then(([invs, cList, corpList, t]) => {
       setInvoices(invs);
       setConsumers(cList);
       setCorps(corpList);
-      setTenant(t);
+      setTenant(t || activeTenant || null);
     });
-  }, []);
+  }, [tenantId]);
+
 
   // Cálculos do Painel de Caixa
   // 1. Total a Receber no Mês

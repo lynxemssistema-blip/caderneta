@@ -53,7 +53,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'gestor_empresa', label: 'Portal Empresa', icon: Users, roles: ['SUPERADMIN', 'COMPANY_MANAGER', 'RESTAURANT_ADMIN'] },
     { id: 'caixa', label: 'Fluxo Caixa', icon: Wallet, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN'] },
     { id: 'cadastro', label: 'Novo Cliente', icon: UserPlus, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'CONSUMER'] },
-    { id: 'novo_restaurante', label: '+ Restaurante Master', icon: Building2, roles: ['SUPERADMIN', 'RESTAURANT_ADMIN', 'CASHIER', 'CONSUMER'] },
+    { id: 'novo_restaurante', label: '+ Restaurante Master', icon: Building2, roles: ['SUPERADMIN'] },
   ];
 
   const visibleItems = navItems.filter((item) => item.roles.includes(userRole));

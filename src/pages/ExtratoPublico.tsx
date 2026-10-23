@@ -7,7 +7,7 @@ import {
   QrCode, 
   ArrowLeft 
 } from 'lucide-react';
-import { supabase, fetchTenant, DEFAULT_TENANT_ID } from '../lib/supabase';
+import { supabase, fetchTenant } from '../lib/supabase';
 import type { Consumer, LedgerEntry, Tenant } from '../types/database';
 import { sound } from '../lib/sound';
 
@@ -43,9 +43,11 @@ export const ExtratoPublico: React.FC<ExtratoPublicoProps> = ({ consumerId, onBa
       .order('created_at', { ascending: false });
     if (eData) setEntries(eData);
 
-    // 3. Tenant
-    const tData = await fetchTenant(DEFAULT_TENANT_ID);
-    setTenant(tData);
+    // 3. Tenant vinculado ao consumidor
+    if (cData?.tenant_id) {
+      const tData = await fetchTenant(cData.tenant_id);
+      setTenant(tData);
+    }
   };
 
   const totalPending = entries

@@ -6,15 +6,17 @@ import {
   CheckCircle2, 
   Building2, 
   User, 
-  DollarSign,
-  PlayCircle,
-  FileText,
-  Printer,
-  MessageSquare,
-  Paperclip,
-  Eye,
-  X
+  DollarSign, 
+  PlayCircle, 
+  FileText, 
+  Printer, 
+  MessageSquare, 
+  Paperclip, 
+  Eye, 
+  X,
+  Mail
 } from 'lucide-react';
+
 import type { Invoice, Tenant } from '../types/database';
 import type { DetailedConsumptionItem } from '../lib/supabase';
 import { 
@@ -23,17 +25,27 @@ import {
   settleInvoice, 
   updateInvoice, 
   fetchTenant, 
-  fetchDetailedCorporateConsumption,
-  DEFAULT_TENANT_ID 
+  fetchCorporateContacts,
+  fetchDetailedCorporateConsumption 
 } from '../lib/supabase';
+import { 
+  sendCorporateReportEmail, 
+  sendPaymentReceiptEmail 
+} from '../lib/emailService';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
 import { ReportHeader } from '../components/ReportHeader';
 
-export const Faturas: React.FC = () => {
+interface FaturasProps {
+  tenantId?: string;
+  activeTenant?: Tenant | null;
+}
+
+export const Faturas: React.FC<FaturasProps> = ({ tenantId, activeTenant }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
+
 
   // Modal de Baixa de Pagamento
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -56,28 +68,41 @@ export const Faturas: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId, activeTenant?.id]);
 
   const loadData = async () => {
+    const targetTenantId = tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      setInvoices([]);
+      setTenant(null);
+      return;
+    }
     try {
       const [invList, tData] = await Promise.all([
-        fetchInvoices(),
-        fetchTenant(DEFAULT_TENANT_ID)
+        fetchInvoices(targetTenantId),
+        fetchTenant(targetTenantId)
       ]);
       setInvoices(invList);
-      setTenant(tData);
+      setTenant(tData || activeTenant || null);
     } catch (err) {
       console.error(err);
     }
   };
 
+
   const handleCloseCycle = async () => {
+    const targetTenantId = tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      alert('Nenhum restaurante ativo selecionado para fechar o ciclo.');
+      return;
+    }
+
     if (!confirm('Deseja agrupar os lançamentos pendentes e gerar as faturas do ciclo agora?')) return;
     
     setIsClosingCycle(true);
     try {
       sound.playKeyClick();
-      await closeBillingCycle();
+      await closeBillingCycle(targetTenantId);
       sound.playSuccessChime();
       setFeedback('Fechamento de ciclo executado com sucesso! Novas faturas geradas.');
       loadData();
@@ -99,6 +124,27 @@ export const Faturas: React.FC = () => {
       sound.playKeyClick();
       await settleInvoice(selectedInvoice.id, amount, payMethod);
       sound.playSuccessChime();
+
+      // Se for fatura corporativa, disparar recibo por e-mail para todos os responsáveis
+      if (selectedInvoice.corporate_client_id) {
+        const contacts = await fetchCorporateContacts(selectedInvoice.corporate_client_id);
+        const emails = contacts.map(c => c.email?.trim()).filter((e): e is string => !!e && e.includes('@'));
+        if (emails.length > 0) {
+          sendPaymentReceiptEmail({
+            emails,
+            companyName: selectedInvoice.corporate_client?.company_name || 'Empresa Conveniada',
+            restaurantName: tenant?.trade_name || 'Restaurante',
+            invoiceId: selectedInvoice.id,
+            paidAmount: amount,
+            paymentMethod: payMethod,
+            paidAt: new Date().toLocaleDateString('pt-BR'),
+            cycleName: `${new Date(selectedInvoice.cycle_start).toLocaleDateString('pt-BR')} a ${new Date(selectedInvoice.cycle_end).toLocaleDateString('pt-BR')}`
+          }).catch(console.error);
+        }
+      }
+
+      setFeedback('Pagamento registrado com sucesso! Recibo oficial enviado por e-mail aos responsáveis.');
+      setTimeout(() => setFeedback(null), 4000);
       setSelectedInvoice(null);
       setPayAmount('');
       loadData();
@@ -107,6 +153,38 @@ export const Faturas: React.FC = () => {
       alert(msg);
     }
   };
+
+  const handleSendCorporateEmail = async (inv: Invoice) => {
+    if (!inv.corporate_client_id) return;
+    sound.playKeyClick();
+    try {
+      const contacts = await fetchCorporateContacts(inv.corporate_client_id);
+      const emails = contacts.map(c => c.email?.trim()).filter((e): e is string => !!e && e.includes('@'));
+      if (emails.length === 0) {
+        alert('Nenhum e-mail de responsável cadastrado para esta empresa.');
+        return;
+      }
+
+      await sendCorporateReportEmail({
+        emails,
+        companyName: inv.corporate_client?.company_name || 'Empresa Conveniada',
+        restaurantName: tenant?.trade_name || 'Restaurante Parceiro',
+        totalAmount: inv.total_amount,
+        cycleName: `${new Date(inv.cycle_start).toLocaleDateString('pt-BR')} a ${new Date(inv.cycle_end).toLocaleDateString('pt-BR')}`,
+        dueDate: new Date(inv.due_date).toLocaleDateString('pt-BR'),
+        pixKey: tenant?.pix_key,
+        pixKeyType: tenant?.pix_key_type,
+        bankDetails: tenant?.bank_name ? `Banco: ${tenant.bank_name} | Ag: ${tenant.bank_agency} | CC: ${tenant.bank_account}` : undefined
+      });
+
+      sound.playSuccessChime();
+      setFeedback(`Fatura e relatório enviados com sucesso para: ${emails.join(', ')}!`);
+      setTimeout(() => setFeedback(null), 5000);
+    } catch (err: any) {
+      alert('Erro ao enviar e-mail: ' + err.message);
+    }
+  };
+
 
   // Abrir Modal de Relatório Analítico Detalhado
   const handleOpenDetailedReport = async (inv: Invoice) => {
@@ -338,6 +416,18 @@ export const Faturas: React.FC = () => {
                     )}
                   </div>
 
+                  {inv.corporate_client_id && (
+                    <button
+                      type="button"
+                      onClick={() => handleSendCorporateEmail(inv)}
+                      className="touch-btn px-2.5 py-2 rounded-xl bg-blue-900/60 hover:bg-blue-800 text-blue-300 font-bold text-xs flex items-center gap-1 border border-blue-500/30"
+                      title="Enviar fatura aos responsáveis por e-mail"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      E-mail
+                    </button>
+                  )}
+
                   {/* Botão Ver Relatório Detalhado */}
                   <button
                     type="button"
@@ -348,6 +438,7 @@ export const Faturas: React.FC = () => {
                     <Eye className="w-3.5 h-3.5 text-emerald-400" />
                     Relatório
                   </button>
+
 
                   {/* Botão Anexar Comprovante / NF */}
                   <button
@@ -455,6 +546,16 @@ export const Faturas: React.FC = () => {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
+                          {inv.corporate_client_id && (
+                            <button
+                              type="button"
+                              onClick={() => handleSendCorporateEmail(inv)}
+                              className="p-1.5 rounded-lg bg-blue-900/60 hover:bg-blue-800 text-blue-300"
+                              title="Enviar Fatura por E-mail aos Responsáveis"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleOpenAttachModal(inv)}
@@ -463,6 +564,7 @@ export const Faturas: React.FC = () => {
                           >
                             <Paperclip className="w-3.5 h-3.5" />
                           </button>
+
                           {inv.status !== 'PAID' && (
                             <button
                               type="button"

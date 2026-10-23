@@ -11,13 +11,18 @@ import {
   User
 } from 'lucide-react';
 import type { Consumer, Tenant } from '../types/database';
-import { fetchConsumers, approveConsumer, fetchTenant, DEFAULT_TENANT_ID } from '../lib/supabase';
+import { fetchConsumers, approveConsumer, fetchTenant } from '../lib/supabase';
 import { sendApprovalNotification } from '../lib/emailService';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
 import { ReportHeader } from '../components/ReportHeader';
 
-export const Aprovacoes: React.FC = () => {
+interface AprovacoesProps {
+  tenantId?: string;
+  activeTenant?: Tenant | null;
+}
+
+export const Aprovacoes: React.FC<AprovacoesProps> = ({ tenantId, activeTenant }) => {
   const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
@@ -27,16 +32,23 @@ export const Aprovacoes: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [tenantId, activeTenant?.id]);
 
   const loadData = async () => {
+    const targetTenantId = tenantId || activeTenant?.id;
+    if (!targetTenantId) {
+      setConsumers([]);
+      setTenant(null);
+      return;
+    }
     const [list, tData] = await Promise.all([
-      fetchConsumers(),
-      fetchTenant(DEFAULT_TENANT_ID)
+      fetchConsumers(targetTenantId),
+      fetchTenant(targetTenantId)
     ]);
     const pendingList = list.filter((c) => c.approval_status === 'PENDING_APPROVAL');
     setConsumers(pendingList);
-    setTenant(tData);
+    setTenant(tData || activeTenant || null);
+
 
     // Inicializar limites padrão
     const initLimits: Record<string, string> = {};

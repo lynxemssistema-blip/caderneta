@@ -5,7 +5,6 @@ import {
   Zap, 
   MessageSquare, 
   ArrowRight, 
-  Users, 
   UtensilsCrossed, 
   Lock, 
   UserCheck 
@@ -14,13 +13,11 @@ import { sound } from '../lib/sound';
 
 interface LandingPageProps {
   onRegisterRestaurant: () => void;
-  onRegisterConsumer: () => void;
   onEnterApp: () => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onRegisterRestaurant,
-  onRegisterConsumer,
   onEnterApp,
 }) => {
   return (
@@ -81,69 +78,40 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             Feito para donos de restaurantes, lanchonetes e bares de bairro. Lançamentos em até <strong>3 cliques</strong>, assinatura eletrônica via <strong>PIN de 4 dígitos</strong> e controle automático de empresas conveniadas.
           </p>
 
-          {/* Cards de Escolha de Ação Principal */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto pt-6 text-left">
-            
-            {/* Opção 1: Dono de Restaurante */}
+          {/* Card Principal: Criar Restaurante Master */}
+          <div className="max-w-md mx-auto pt-6 text-left">
             <div 
               onClick={() => {
                 sound.playKeyClick();
                 onRegisterRestaurant();
               }}
-              className="p-6 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-emerald-500/60 rounded-3xl cursor-pointer transition-all shadow-xl group space-y-3"
+              className="p-8 bg-gradient-to-b from-slate-900 to-slate-900/90 hover:from-slate-850 hover:to-slate-900 border border-slate-800 hover:border-emerald-500/70 rounded-3xl cursor-pointer transition-all shadow-2xl shadow-emerald-950/30 group space-y-4"
             >
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Store className="w-6 h-6" />
+              <div className="flex items-center justify-between">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Store className="w-7 h-7" />
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Acesso Estabelecimento
+                </span>
               </div>
+              
               <div>
-                <h3 className="text-lg font-black text-white group-hover:text-emerald-400 transition-colors flex items-center gap-1.5">
-                  Sou Restaurante <ArrowRight className="w-4 h-4 ml-auto" />
+                <h3 className="text-xl font-black text-white group-hover:text-emerald-400 transition-colors flex items-center gap-2">
+                  Cadastrar Meu Restaurante <ArrowRight className="w-5 h-5 ml-auto text-emerald-400" />
                 </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Cadastre seu estabelecimento, crie o <strong>Usuário Master</strong>, cadastre produtos e convênios com empresas da região.
+                <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                  Crie sua conta como <strong>Usuário Master</strong>, configure seu cardápio, adicione convênios corporativos e envie convites oficiais para seus clientes.
                 </p>
               </div>
-              <span className="inline-block text-xs font-black text-emerald-400">
-                Criar Restaurante Master →
-              </span>
-            </div>
 
-            {/* Opção 2: Cliente ou Funcionário */}
-            <div 
-              onClick={() => {
-                sound.playKeyClick();
-                onRegisterConsumer();
-              }}
-              className="p-6 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-blue-500/60 rounded-3xl cursor-pointer transition-all shadow-xl group space-y-3"
-            >
-              <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Users className="w-6 h-6" />
+              <div className="pt-2 flex items-center justify-between">
+                <span className="text-xs font-black text-emerald-400">
+                  Começar Teste Grátis →
+                </span>
+                <span className="text-[11px] text-slate-500">Sem taxa de adesão</span>
               </div>
-              <div>
-                <h3 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors flex items-center gap-1.5">
-                  Sou Cliente <ArrowRight className="w-4 h-4 ml-auto" />
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Abra sua caderneta individual ou vincule-se à sua empresa com validação de e-mail e PIN de segurança.
-                </p>
-              </div>
-              <span className="inline-block text-xs font-black text-blue-400">
-                Cadastrar Minha Conta →
-              </span>
             </div>
-
-          </div>
-
-          <div className="pt-4">
-            <button
-              onClick={() => {
-                sound.playKeyClick();
-                onEnterApp();
-              }}
-              className="touch-btn text-xs font-extrabold text-slate-400 hover:text-emerald-400 underline underline-offset-4"
-            >
-              Ou entre diretamente no Balcão de Vendas (Modo Demonstração) →
-            </button>
           </div>
 
         </div>
@@ -218,7 +186,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
             <h3 className="text-base font-black text-white">Aprovação Master e E-mail OTP</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Validação por código OTP de 6 dígitos via Hostinger SMTP Oficial e liberação de limite pelo dono do restaurante antes do primeiro consumo.
+              Validação por código OTP de 6 dígitos enviado pelo sistema Caderneta e liberação de limite pelo dono do restaurante antes do primeiro consumo.
             </p>
           </div>
 

@@ -52,3 +52,92 @@ export async function sendApprovalNotification(params: {
     return { success: false, error: errorMsg };
   }
 }
+
+export async function sendInviteEmail(params: {
+  email: string;
+  name: string;
+  restaurantName?: string;
+  inviteUrl: string;
+  creditLimit?: number;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${EMAIL_API_URL}/api/send-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { success: false, error: data.error || 'Falha ao enviar convite' };
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Erro de conexão com o servidor de e-mail';
+    return { success: false, error: errorMsg };
+  }
+}
+
+export async function sendCorporateReportEmail(params: {
+  emails: string[];
+  companyName: string;
+  restaurantName?: string;
+  totalAmount: number;
+  cycleName?: string;
+  dueDate?: string;
+  pixKey?: string;
+  pixKeyType?: string;
+  bankDetails?: string;
+  employeeCount?: number;
+  itemsSummary?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${EMAIL_API_URL}/api/send-corporate-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { success: false, error: data.error || 'Falha ao enviar relatório' };
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Erro de conexão';
+    return { success: false, error: errorMsg };
+  }
+}
+
+export async function sendPaymentReceiptEmail(params: {
+  emails: string[];
+  companyName: string;
+  restaurantName?: string;
+  invoiceId?: string;
+  paidAmount: number;
+  paymentMethod?: string;
+  paidAt?: string;
+  cycleName?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${EMAIL_API_URL}/api/send-payment-receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { success: false, error: data.error || 'Falha ao enviar recibo' };
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Erro de conexão';
+    return { success: false, error: errorMsg };
+  }
+}
+
+
