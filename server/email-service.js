@@ -28,6 +28,90 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Configurações da Evolution API WhatsApp
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evo.lynxems.com.br';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '1C62EE90D11A-4C75-B1BA-383CDF634A39';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'Suporte Lynx';
+
+// Rota para verificar status da conexão WhatsApp na Evolution API
+app.get('/api/evolution-status', async (req, res) => {
+  try {
+    const response = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+      headers: { 'apikey': EVOLUTION_API_KEY }
+    });
+    if (!response.ok) {
+      return res.status(response.status).json({ connected: false, error: 'Falha ao consultar Evolution API' });
+    }
+    const instances = await response.json();
+    const inst = Array.isArray(instances) ? instances.find(i => i.name === EVOLUTION_INSTANCE) : null;
+    res.json({
+      connected: inst?.connectionStatus === 'open',
+      status: inst?.connectionStatus || 'disconnected',
+      instance: EVOLUTION_INSTANCE,
+      profileName: inst?.profileName,
+      number: inst?.number
+    });
+  } catch (error) {
+    res.status(500).json({ connected: false, error: error.message });
+  }
+});
+
+// Rota de envio de mensagem de WhatsApp pelo aplicativo via Evolution API
+app.post('/api/send-whatsapp', async (req, res) => {
+  try {
+    const { phone, message, clientName } = req.body;
+
+    if (!phone || !message) {
+      return res.status(400).json({ error: 'Telefone e mensagem são obrigatórios.' });
+    }
+
+    // Sanitizar telefone brasileiro
+    let cleanPhone = String(phone).replace(/\D/g, '');
+    if (cleanPhone.length === 10 || cleanPhone.length === 11) {
+      cleanPhone = '55' + cleanPhone;
+    }
+
+    if (cleanPhone.length < 12) {
+      return res.status(400).json({ error: 'Número de telefone inválido para envio de WhatsApp.' });
+    }
+
+    const targetUrl = `${EVOLUTION_API_URL}/message/sendText/${encodeURIComponent(EVOLUTION_INSTANCE)}`;
+
+    const response = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'apikey': EVOLUTION_API_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        number: cleanPhone,
+        text: message
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('❌ [Evolution API] Falha no envio:', data);
+      return res.status(response.status).json({
+        error: data.message || data.error || 'Erro ao enviar mensagem via WhatsApp',
+        details: data
+      });
+    }
+
+    console.log(`📱 [WhatsApp Enviado via Evolution API] Para ${clientName || cleanPhone} (${cleanPhone})`);
+    res.json({
+      success: true,
+      messageId: data.key?.id || data.id,
+      remoteJid: data.key?.remoteJid
+    });
+  } catch (error) {
+    console.error('❌ Erro no envio de WhatsApp:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 
 // Configuração do Transportador SMTP da Hostinger Oficial
 const transporter = nodemailer.createTransport({

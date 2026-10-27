@@ -24,6 +24,7 @@ import {
 import { sendInviteEmail } from '../lib/emailService';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
+import { WhatsAppExpenseModal } from '../components/WhatsAppExpenseModal';
 
 
 interface CadernetasProps {
@@ -61,6 +62,10 @@ export const Cadernetas: React.FC<CadernetasProps> = ({
   const [inviteIsResponsible, setInviteIsResponsible] = useState(false);
   const [sendingInvite, setSendingInvite] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Modal de Relatório de Despesas WhatsApp
+  const [whatsAppConsumer, setWhatsAppConsumer] = useState<Consumer | null>(null);
+
 
   useEffect(() => {
     loadData();
@@ -171,21 +176,8 @@ export const Cadernetas: React.FC<CadernetasProps> = ({
   };
 
   const handleSendWhatsApp = (c: Consumer) => {
-    const phone = c.phone.replace(/\D/g, '');
-    const total = Number(c.total_pending || 0).toFixed(2);
-    const pix = tenant?.pix_key || '';
-
-    const text = encodeURIComponent(
-      `Olá, *${c.name}*!\n\n` +
-      `Aqui é do *${tenant?.trade_name || 'Restaurante'}*.\n` +
-      `Passando para lembrar do seu saldo em aberto na caderneta:\n` +
-      `💰 *Total:* R$ ${total}\n\n` +
-      (pix ? `🔑 *Chave Pix:* ${pix} (${tenant?.pix_key_type || 'Chave'})\n\n` : '') +
-      `Qualquer dúvida estamos à disposição!`
-    );
-
-    const url = phone ? `https://wa.me/55${phone}?text=${text}` : `https://wa.me/?text=${text}`;
-    window.open(url, '_blank');
+    sound.playKeyClick();
+    setWhatsAppConsumer(c);
   };
 
   const handleSendInviteSubmit = async (e: React.FormEvent) => {
@@ -778,6 +770,15 @@ export const Cadernetas: React.FC<CadernetasProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal de Envio Personalizado de Relatório de Despesas pelo WhatsApp */}
+      <WhatsAppExpenseModal
+        isOpen={!!whatsAppConsumer}
+        onClose={() => setWhatsAppConsumer(null)}
+        consumer={whatsAppConsumer}
+        tenant={tenant}
+        onSuccess={showNotification}
+      />
 
     </div>
   );

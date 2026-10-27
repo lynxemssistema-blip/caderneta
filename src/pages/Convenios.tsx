@@ -36,6 +36,7 @@ import {
   sendCorporateReportEmail, 
   sendPaymentReceiptEmail 
 } from '../lib/emailService';
+import { sendWhatsAppDirect, openWhatsAppWebFallback } from '../lib/whatsappService';
 import { sound } from '../lib/sound';
 import { ViewToggle } from '../components/ViewToggle';
 import { ReportHeader } from '../components/ReportHeader';
@@ -380,13 +381,14 @@ export const Convenios: React.FC<ConveniosProps> = ({ tenantId, activeTenant }) 
     }
   };
 
-  const handleSendWhatsAppBilling = (corp: CorporateClient) => {
+  const handleSendWhatsAppBilling = async (corp: CorporateClient) => {
+    sound.playKeyClick();
     const primaryContact = corp.contacts?.find(c => c.is_primary) || corp.contacts?.[0];
     const phone = primaryContact?.phone || corp.cnpj || '';
     const cleanPhone = phone.replace(/\D/g, '');
     const total = Number(corp.total_pending || 0).toFixed(2);
 
-    const text = encodeURIComponent(
+    const message = (
       `Olá, *${corp.company_name}*${primaryContact ? ` (A/C ${primaryContact.name})` : ''}!\n\n` +
       `Aqui é do *${tenant?.trade_name || 'Restaurante'}*.\n` +
       `Conforme combinado para o pagamento semanal (${corp.payment_weekday || 'Quinta-feira'}), estamos adiantando o relatório de consumo dos seus colaboradores.\n\n` +
@@ -398,8 +400,23 @@ export const Convenios: React.FC<ConveniosProps> = ({ tenantId, activeTenant }) 
       `Obrigado pela parceria!`
     );
 
-    const url = cleanPhone ? `https://wa.me/55${cleanPhone}?text=${text}` : `https://wa.me/?text=${text}`;
-    window.open(url, '_blank');
+    if (cleanPhone) {
+      showSuccess(`Enviando cobrança via WhatsApp para ${corp.company_name}...`);
+      const res = await sendWhatsAppDirect({
+        phone: cleanPhone,
+        message,
+        clientName: corp.company_name
+      });
+
+      if (res.success) {
+        sound.playSuccessChime();
+        showSuccess(`✅ Relatório e cobrança enviados com sucesso via WhatsApp para ${corp.company_name}!`);
+      } else {
+        openWhatsAppWebFallback(cleanPhone, message);
+      }
+    } else {
+      openWhatsAppWebFallback('', message);
+    }
   };
 
   const getBillingAlert = (corp: CorporateClient) => {
