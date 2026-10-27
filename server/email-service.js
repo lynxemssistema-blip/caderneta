@@ -2,14 +2,32 @@ import express from 'express';
 import cors from 'cors';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, '../dist');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
+
+// Healthcheck endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    app: 'Caderneta Digital',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
 
 // Configuração do Transportador SMTP da Hostinger Oficial
 const transporter = nodemailer.createTransport({
@@ -433,7 +451,26 @@ app.post('/api/send-payment-receipt', async (req, res) => {
   }
 });
 
+// Servir arquivos estáticos do frontend (produção)
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  console.log(`📦 [Frontend Estático] Servindo arquivos da pasta: ${distPath}`);
+
+  // Fallback para SPA (qualquer rota que não comece com /api retorna o index.html)
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+      return res.sendFile(path.join(distPath, 'index.html'));
+    }
+    next();
+  });
+}
+
+// 404 para rotas não mapeadas da API
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Endpoint da API não encontrado' });
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 [Email Server] Rodando na porta ${PORT}`);
+  console.log(`🚀 [Caderneta Server] Aplicação rodando na porta ${PORT}`);
 });
 

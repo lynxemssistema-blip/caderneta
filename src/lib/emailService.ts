@@ -1,5 +1,8 @@
 // Cliente para envio de e-mails via API Hostinger SMTP
-const EMAIL_API_URL = import.meta.env.VITE_EMAIL_API_URL || 'http://localhost:3001';
+const EMAIL_API_URL = import.meta.env.VITE_EMAIL_API_URL !== undefined && import.meta.env.VITE_EMAIL_API_URL !== ''
+  ? import.meta.env.VITE_EMAIL_API_URL
+  : (import.meta.env.PROD ? '' : 'http://localhost:3001');
+
 
 export async function sendVerificationEmail(params: {
   email: string;

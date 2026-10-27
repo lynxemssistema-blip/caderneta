@@ -1,0 +1,18 @@
+services:
+  caderneta:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: caderneta-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SMTP_HOST=${SMTP_HOST:-smtp.hostinger.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER:-suporte@lynxems.com.br}
+      - SMTP_PASS=${SMTP_PASS:-10207597Rdv*}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Caderneta}
+      - VITE_APP_URL=${VITE_APP_URL:-https://caderneta.lynxems.com.br}
